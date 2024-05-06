@@ -2,19 +2,15 @@ import sys
 
 sys.path.append("..")
 
-from ctcr_reconstructor.torch_reconstruction import TorchRotationFrame, image_to_idx, camera_folder_to_params, CannulaPixelDataset
-from ctcr_reconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiRotationFrame
-from skimage.morphology import disk, binary_dilation
-from ctcr_reconstructor.utils import fromWorld2Img
+from icpReconstructor.torch_reconstruction import TorchMovingFrame, image_to_idx, camera_folder_to_params, PixelDataset
+from icpReconstructor.epipolar_reconstruction import EpipolarReconstructor
+from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
+from icpReconstructor.utils import fromWorld2Img
 import torch
-import casadi
 import matplotlib.pyplot as plt
-import PyCTR
 import numpy as np
-import reconstruction_by_projection
 from time import time
 from random import sample
-from scipy.spatial.distance import cdist
 
 #%% Initialization
 l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the segments
@@ -50,7 +46,7 @@ im1_bin = plt.imread("im1.png") > 0
 p0_img = image_to_idx(im0_bin)
 p1_img = image_to_idx(im1_bin)
 
-dataset = CannulaPixelDataset([p0_img, p1_img])
+dataset = PixelDataset([p0_img, p1_img])
 
 #%% epipolar line matching
 now = time()
@@ -60,10 +56,23 @@ tip_estimator_params_1 = camera_folder + "\\param_cam_1.mat"
 
 bin_threshold = 200
 
-reconstructor = reconstruction_by_projection.ReC(np.uint8((1-im0_bin[:,:,None])*255*np.ones((1,1,3))), np.uint8((1-im1_bin[:,:,None])*255*np.ones((1,1,3))), A0.detach().numpy(), A1.detach().numpy(), dist0.detach().numpy(), dist1.detach().numpy(), P0.detach().numpy(), P1.detach().numpy(), R.detach().numpy(), T.detach().numpy(), bin_threshold, tip_estimator_params_0, tip_estimator_params_1)
+reconstructor = EpipolarReconstructor(np.uint8((1-im0_bin[:,:,None])*255*np.ones((1,1,3))), np.uint8((1-im1_bin[:,:,None])*255*np.ones((1,1,3))), A0.detach().numpy(), A1.detach().numpy(), dist0.detach().numpy(), dist1.detach().numpy(), P0.detach().numpy(), P1.detach().numpy(), R.detach().numpy(), T.detach().numpy(), bin_threshold, tip_estimator_params_0, tip_estimator_params_1)
 
-Data_cam_0, Data_cam_1, _, _ = reconstructor.get_2D(start_cam0 = 10,  end_cam0 = 10, start_cam1 = 10, end_cam1 = 10, plot=False)
-Data_3d = reconstructor.get_3D(data_cam_0 = Data_cam_0, data_cam_1 = Data_cam_1, interval = 10, plot=False) #x, y, z, s
+Data_cam_0, Data_cam_1, _, _ = reconstructor.get_2D(plot=False)
+Data_3d = reconstructor.get_3D(data_cam_0 = Data_cam_0, data_cam_1 = Data_cam_1, interval = 20, plot=False) #x, y, z, s
+
+check_plot = False
+
+if check_plot:
+    fig = plt.figure()
+    ax = plt.axes(projection='3d')
+    ax.plot3D(Data_3d[:,0], Data_3d[:,1], Data_3d[:,2], c='r', label='reconstrution')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.axis('equal')
+    ax.legend()
+    plt.show()
 
 print(f"3D reconstruction took {time()-now} s.")
 
@@ -78,7 +87,7 @@ dataset_idc = sample(range(len(dataset)), int(len(dataset)/frac))
 
 n = len(l)
 start = time()
-model = CasadiRotationFrame(l.detach().numpy(), n_steps=40)
+model = CasadiMovingFrame(l.detach().numpy(), n_steps=40)
 ux = Polynomial3Casadi(model.opt, n, **curvature_options)
 uy = Polynomial3Casadi(model.opt, n, **curvature_options)
 model.ux = ux
@@ -109,7 +118,7 @@ ux = torch.from_numpy(ux).float()
 uy = torch.from_numpy(uy).float()
 uz = torch.from_numpy(uz).float()
 
-curvature = TorchRotationFrame(l, integrator="dopri5", rotation_method="rotm", ux=ux, uy=uy, uz=uz)
+curvature = TorchMovingFrame(l, integrator="dopri5", rotation_method="rotm", ux=ux, uy=uy, uz=uz)
 
 s = torch.linspace(0, l[-1], 1000)
 p_out = curvature.integrate(s).detach().numpy()

@@ -4,7 +4,7 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
-from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchRotationFrame, TorchPolynomialCurve, Polynomial3Torch, image_to_idx, camera_folder_to_params, PolynomialKTorch
+from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchMovingFrame, TorchPolynomialCurve, Polynomial3Torch, image_to_idx, camera_folder_to_params, PolynomialKTorch
 from skimage.morphology import disk, binary_dilation
 from icpReconstructor.utils import fromWorld2Img
 import torch
@@ -33,7 +33,7 @@ R = cam_params[0]["R"]
 T = cam_params[0]["T"]
 
 plot_curvature = True
-n_iter = 8
+n_iter = 1
 
 #%% Image data
 """
@@ -47,10 +47,10 @@ p1_img = image_to_idx(im1_bin)
 
 #%%
 now = time()
-curve = TorchRotationFrame(l, integrator="rk4", rotation_method="rotm")
+curve = TorchMovingFrame(l, integrator="rk4", rotation_method="rotm")
 tce = TorchCurveEstimator(curve, cam_params, l[-1], w=0.0, n_steps=40, dist_norm=2)
 if n_iter > 0:
-    optimizer = torch.optim.Adam(tce.parameters(), 0.2, weight_decay=0)
+    optimizer = torch.optim.Adam(curve.parameters(), 0.2, weight_decay=0)
     loss_hist = tce.fit([p0_img, p1_img], optimizer, n_iter=n_iter, batch_size=4000, repetitions=1)
 
 print(f"The algorithm ran {time()-now} s")

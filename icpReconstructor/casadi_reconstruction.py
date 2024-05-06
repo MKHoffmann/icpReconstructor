@@ -32,7 +32,7 @@ class Polynomial3Casadi(ParameterFunctionCasadi):
        Arguments
        ----------
        n : int
-           Number of polynomials used to approximate the ctcr. Typically set to the number of tubes.
+           Number of polynomials used to approximate the cr. Typically set to the number of tubes.
 
        u_p : str or n-by-4 tensor
            Optional initialization of the curvature parameters.
@@ -119,7 +119,7 @@ class PolynomialKCasadi(ParameterFunctionCasadi):
             Arguments
             ----------
             n : int
-                Number of polynomials used to approximate the ctcr. Typically set to the number of tubes.
+                Number of polynomials used to approximate the cr. Typically set to the number of tubes.
 
             K : int
                 Degree used for the polynomials.
@@ -196,7 +196,7 @@ class CasadiCurveModel(ABC):
         # Method for requesting from all parameterized functions their corresponding parameters
         pass
 
-class CasadiRotationFrame(CasadiCurveModel):
+class CasadiMovingFrame(CasadiCurveModel):
     r"""
         This class implements the rotation frame formulation for reconstructing a continuum robot's backbone.
         The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchCurvature objects.
@@ -209,7 +209,7 @@ class CasadiRotationFrame(CasadiCurveModel):
             unit.
 
         p0 : 3-by-1 tensor
-            A 3D point where the CTCR exits the actuation unit in world
+            A 3D point where the CR exits the actuation unit in world
             coordinates.
 
         p0_parametric : boolean
@@ -217,7 +217,7 @@ class CasadiRotationFrame(CasadiCurveModel):
 
         R0 : 3-by-3 or 4-by-1 tensor
             Either a 3-by-3 matrix from SO(3) that describes the orientation of
-            the exiting CTCR (ref. [1]) or, if R0_parametric is True, tensor of
+            the exiting CR (ref. [1]) or, if R0_parametric is True, tensor of
             shape (4,). The matrix is then parametrized using quaternions.
 
         R0_parametric : boolean
@@ -466,7 +466,7 @@ class CasadiRotationFrame(CasadiCurveModel):
             # Do normal integration step if no value of s lies between self.s_val[i] and self.s_val[i+1]
             self.opt.subject_to(
                 casadi.cse(self.x[:, i+1] == discretizeODE(
-                    self.ode, self.method, 12, self.s_val[i+1]-self.s_val[i], self.n, self.s_val[i], self.x[:, i]
+                    self.ode, self.method, 12, self.s_val[i+1]-self.s_val[i], self.s_val[i], self.x[:, i]
                     )
                 )
             )
@@ -478,7 +478,7 @@ class CasadiRotationFrame(CasadiCurveModel):
             # Find the index j of self.s_val, where self.s_val[j] <= s[i]
             j = np.where(self.s_val <= s[i])[0][-1]
             x[:, i] = discretizeODE(
-                self.ode, self.method, 12, s[i]-self.s_val[j], self.n, self.s_val[j], self.x[:, j]
+                self.ode, self.method, 12, s[i]-self.s_val[j], self.s_val[j], self.x[:, j]
                 )
         return casadi.cse(x)
 
@@ -493,8 +493,8 @@ class CasadiRotationFrame(CasadiCurveModel):
             The current value of the arc-length.
 
         x : 12-by-1 casadi.MX
-            The current state x = [p, R]. p is the position of the CTCR in world coordinates and R is the rotation matrix describing the orientation of the
-            CTCR at the current arc-length.
+            The current state x = [p, R]. p is the position of the CR in world coordinates and R is the rotation matrix describing the orientation of the
+            CR at the current arc-length.
         """
         R = x[3:].reshape((3, 3))
 
@@ -519,7 +519,7 @@ class CasadiCurveEstimator:
         Arguments
         ----------
         curve_model : nn.Module
-            A 3D point where the CTCR exits the actuation unit in world
+            A 3D point where the CR exits the actuation unit in world
             coordinates.
         
         l : positive scalar
@@ -533,14 +533,14 @@ class CasadiCurveEstimator:
             automatically generate this list for you.
 
         n_steps : int
-            Number of intermediate steps to evaluate the reconstructed ctcr at.
+            Number of intermediate steps to evaluate the reconstructed cr at.
             If low, the computation is fast, but for very low values the convergence might
             be bad. If high, a better solution might be found, at cost of higher computation
             times.
 
         w : double
             Weighting of the two cost functions. 0 (only track distance of pixels to
-            reconstruction) is typically a good value, but if parts of the ctcr are occluded,
+            reconstruction) is typically a good value, but if parts of the cr are occluded,
             increasing w can help.
 
         dist_norm : int
@@ -580,7 +580,7 @@ class CasadiCurveEstimator:
     def solve_3d( self, s, pts, lam_2=0 ):
         """
         Solve the optimization problem for the given 3D points pts at the estimated positions s. The optimization problem is solved using Casadi. The resulting
-        curvature parameters can then be used to reconstruct the CTCR's backbone. The program first sets the curvature functions, followed by the construction
+        curvature parameters can then be used to reconstruct the CR's backbone. The program first sets the curvature functions, followed by the construction
         of the continuity constraints for the Serret-Frenet formulas. The resulting ODE is integrated using the selected method in the variable self.method.
 
         Arguments
@@ -628,110 +628,111 @@ class CasadiCurveEstimator:
                 self.__bb_pixel_coordinates.append(fromWorld2ImgCasadi(backbone_pts, **self.camera_calibration_parameters[i]).T)
         return self.__bb_pixel_coordinates
 
-    def get_pixel_diff_idx( self, ctcr_img_coordinates, img_idx_data ):
+    def get_pixel_diff_idx( self, cr_img_coordinates, img_idx_data ):
         """
-        Computes for each CTCR pixel the index of the closest reconstruction pixel.
+        Computes for each CR pixel the index of the closest reconstruction pixel.
 
         Arguments
         ----------
-        ctcr_img_coordinates : m-by-2 int
-            Coordinates of CTCR pixels in image coordinates.
+        cr_img_coordinates : m-by-2 int
+            Coordinates of CR pixels in image coordinates.
 
         img_idx_data : m-by-1 int
             Vector containing the index from which image the corresponding img_coordinates entry was taken.
         """
         backbone_img_coordinates = [self.sol.value(i) for i in self.get_img_coordinates()]
         idx_min_dist = []
-        ctcr_img_coordinates_sorted = []
+        cr_img_coordinates_sorted = []
         for i in np.unique(np.unique(img_idx_data)):
-            ctcr_img_coordinates_i = ctcr_img_coordinates[img_idx_data == i, :]
-            x_diffs = backbone_img_coordinates[i][:, 0].reshape((-1, 1)) - ctcr_img_coordinates_i[:, 0].reshape(1, -1)
-            y_diffs = backbone_img_coordinates[i][:, 1].reshape((-1, 1)) - ctcr_img_coordinates_i[:, 1].reshape(1, -1)
+            cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
+            x_diffs = backbone_img_coordinates[i][:, 0].reshape((-1, 1)) - cr_img_coordinates_i[:, 0].reshape(1, -1)
+            y_diffs = backbone_img_coordinates[i][:, 1].reshape((-1, 1)) - cr_img_coordinates_i[:, 1].reshape(1, -1)
             distances = (x_diffs ** self.dist_norm + y_diffs ** self.dist_norm) ** (1 / self.dist_norm)
             idx_min_dist.append(np.argmin(distances, 0))
-            ctcr_img_coordinates_sorted.append(ctcr_img_coordinates_i)
-        return idx_min_dist, ctcr_img_coordinates_sorted
+            cr_img_coordinates_sorted.append(cr_img_coordinates_i)
+        return idx_min_dist, cr_img_coordinates_sorted
 
-    def pixel_diff( self, ctcr_img_coordinates, img_idx_data ):
+    def pixel_diff( self, cr_img_coordinates, img_idx_data ):
         """
-        Compute the distance of each CTCR pixel to the closest reconstruction point in image coordinates using casadi.
+        Compute the distance of each CR pixel to the closest reconstruction point in image coordinates using casadi.
 
         Arguments
         ----------
-        ctcr_img_coordinates : m-by-2 int
-            The image coordinates of CTCR pixels.
+        cr_img_coordinates : m-by-2 int
+            The image coordinates of CR pixels.
 
         img_idx_data :m-by-1 int
             The index of the image a point was taken from.
        """
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
-        idx_min_dist, ctcr_img_coordinates_sorted = self.get_pixel_diff_idx(ctcr_img_coordinates, img_idx_data)
+        idx_min_dist, cr_img_coordinates_sorted = self.get_pixel_diff_idx(cr_img_coordinates, img_idx_data)
         for i in np.unique(img_idx_data):
-            diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - ctcr_img_coordinates_sorted[i] if diffs is None else casadi.vertcat(
-                diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - ctcr_img_coordinates_sorted[i])
+            diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i] if diffs is None else casadi.vertcat(
+                diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i])
         return diffs
 
-    def pixel_loss( self, ctcr_img_coordinates, img_idx_data ):
+    def pixel_loss( self, cr_img_coordinates, img_idx_data ):
         """
-            Computes the average distance of each CTCR pixel to the corresponding backbone point in casadi.
+            Computes the average distance of each CR pixel to the corresponding backbone point in casadi.
         """
         # Penalizes the minimum distance of each measurement point to the reconstructed curve.
-        diffs = self.pixel_diff(ctcr_img_coordinates, img_idx_data)
+        diffs = self.pixel_diff(cr_img_coordinates, img_idx_data)
         return casadi.sum1(casadi.sum2(diffs ** self.dist_norm) ** (1 / self.dist_norm)) / diffs.shape[0]
 
-    def get_backbone_diff_idx( self, ctcr_img_coordinates, img_idx_data ):
+    def get_backbone_diff_idx( self, cr_img_coordinates, img_idx_data ):
         """
-        Computes for each backbone point in image coordinates the index of the closest CTCR pixel .
+        Computes for each backbone point in image coordinates the index of the closest CR pixel .
 
         Arguments
         ----------
-        ctcr_img_coordinates : m-by-2 int
-            Coordinates of CTCR pixels in image coordinates.
+        cr_img_coordinates : m-by-2 int
+            Coordinates of CR pixels in image coordinates.
 
         img_idx_data : m-by-1 int
             Vector containing the index from which image the corresponding img_coordinates entry was taken.
         """
-        backbone_img_coordinates = self.sol.value(self.get_img_coordinates())
+        backbone_img_coordinates = [self.sol.value(i) for i in self.get_img_coordinates()]
         idx_min_dist = []
-        ctcr_img_coordinates_sorted = None
+        cr_img_coordinates_sorted = None
         for i in np.unique(np.unique(img_idx_data)):
-            ctcr_img_coordinates_i = ctcr_img_coordinates[img_idx_data == i, :]
-            x_diffs = backbone_img_coordinates[i][:, 0].reshape((-1, 1)) - ctcr_img_coordinates_i[:, 0].reshape(1, -1)
-            y_diffs = backbone_img_coordinates[i][:, 1].reshape((-1, 1)) - ctcr_img_coordinates_i[:, 1].reshape(1, -1)
+            cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
+            x_diffs = backbone_img_coordinates[i][:, 0].reshape((-1, 1)) - cr_img_coordinates_i[:, 0].reshape(1, -1)
+            y_diffs = backbone_img_coordinates[i][:, 1].reshape((-1, 1)) - cr_img_coordinates_i[:, 1].reshape(1, -1)
             distances = (x_diffs ** self.dist_norm + y_diffs ** self.dist_norm) ** (1 / self.dist_norm)
             idx_min_dist.append(np.argmin(distances, 1))
-            ctcr_img_coordinates_sorted = [ctcr_img_coordinates_i] if ctcr_img_coordinates_sorted is None else ctcr_img_coordinates_sorted + [
-                ctcr_img_coordinates_i]
+            cr_img_coordinates_sorted = [cr_img_coordinates_i] if cr_img_coordinates_sorted is None else cr_img_coordinates_sorted + [
+                cr_img_coordinates_i]
 
-        return idx_min_dist, ctcr_img_coordinates_sorted
+        return idx_min_dist, cr_img_coordinates_sorted
 
-    def backbone_diff( self, ctcr_img_coordinates, img_idx_data ):
+    def backbone_diff( self, cr_img_coordinates, img_idx_data ):
         """
-        Compute the distance of each CTCR pixel to the closest reconstruction point in image coordinates.
+        Compute the distance of each CR pixel to the closest reconstruction point in image coordinates.
 
         Arguments
         ----------
-        ctcr_img_coordinates : m-by-2 int
-            The image coordinates of CTCR pixels.
+        cr_img_coordinates : m-by-2 int
+            The image coordinates of CR pixels.
 
         img_idx_data :m-by-1 int
             The index of the image a point was taken from.
-       """
+        """
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
-        idx_min_dist, ctcr_img_coordinates_sorted = self.get_backbone_diff_idx(ctcr_img_coordinates, img_idx_data)
+        idx_min_dist, cr_img_coordinates_sorted = self.get_backbone_diff_idx(cr_img_coordinates, img_idx_data)
         for i in np.unique(img_idx_data):
-            diffs = curve_pixel_coordinates[i] - ctcr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else torch.concatenate(
-                (diffs, curve_pixel_coordinates[i] - ctcr_img_coordinates_sorted[i][idx_min_dist[i], :]), 0)
+            diffs = curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else casadi.vertcat(
+                diffs, curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :])
         return diffs
 
-    def backbone_loss( self, img_coordinates, img_idx_data ):
+    def backbone_loss( self, cr_img_coordinates, img_idx_data ):
         """
-            Computes the average distance of each backbone point to the corresponding CTCR pixel.
+            Computes the average distance of each backbone point to the corresponding CR pixel.
         """
         # Penalizes the minimum distance of each measurement point to the reconstructed curve.
-        return torch.linalg.vector_norm(self.backbone_diff(img_coordinates, img_idx_data), self.dist_norm, 1).mean()
+        diffs = self.backbone_diff(cr_img_coordinates, img_idx_data)
+        return casadi.sum1(casadi.sum2(diffs ** self.dist_norm) ** (1 / self.dist_norm)) / diffs.shape[0]
 
     def loss( self, img_coordinates, img_idx_data ):
         """
@@ -740,7 +741,7 @@ class CasadiCurveEstimator:
         Arguments
         ----------
         img_coordinates : m-by-2 np.array
-            Tensor containing the image coordinates of CTCR pixels.
+            Tensor containing the image coordinates of CR pixels.
 
         img_idx_data :m-by-1 np.array
             Tensor containing the index of the image a point was taken from.
