@@ -1,25 +1,24 @@
 # -*- coding: utf-8 -*-
 """
-This script contains a PyTorch-based implementation of the CTCR fitting algorithm presented in xxx.
+This script contains a PyTorch-based implementation of the continuum robot reconstruction algorithm presented in xxx.
 The package needs a PyTorch build with LAPACK/BLAS, the easiest way for getting this is by installing PyTorch using Conda/Anaconda.
 """
 
 import torch
 import torch.nn as nn
 import numpy as np
-from .utils import fromWorld2Img, ball_tree_norm
+from .utils import fromWorld2Img, ball_tree_norm, PixelDataset
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint as odeint
-from torch.utils.data import Dataset, DataLoader
-from os.path import sep
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
 
 
-class TorchCurvature(nn.Module, ABC):
+class TorchParameterizedFunction(nn.Module, ABC):
     """
-        Class for storing parameterized curvature functions for usage with TorchRotationFrame.
+        Class for storing parameterized functions for usage with TorchMovingFrame.
         Can also be used for other models like polynomials, but it's original purpose was the
         usage as curvature polynomials.
     """
@@ -29,7 +28,7 @@ class TorchCurvature(nn.Module, ABC):
         pass
 
 
-class Polynomial3Torch(TorchCurvature):
+class Polynomial3Torch(TorchParameterizedFunction):
     r"""
         Parameterization of degree 3 polynomials. The parameters are the function value and the derivative at start and end.
         This, for example, allows for easy initialization given simulation results from physics-based models.
@@ -41,7 +40,7 @@ class Polynomial3Torch(TorchCurvature):
         Arguments
         ----------
         n : int
-            Number of polynomials used to approximate the ctcr. Typically set to the number of tubes.
+            Number of polynomials used to approximate the cr. Typically set to the number of tubes.
 
         u_p : str or n-by-4 tensor
             Optional initialization of the curvature parameters.
@@ -104,14 +103,14 @@ class Polynomial3Torch(TorchCurvature):
         return u_fun
 
 
-class PolynomialKTorch(TorchCurvature):
+class PolynomialKTorch(TorchParameterizedFunction):
     r"""
-        Parameterization of degree K polynomials for the curvatures used by TorchRotationFrame.
+        Parameterization of degree K polynomials for the curvatures used by TorchMovingFrame.
 
         Arguments
         ----------
         n : int
-            Number of polynomials used to approximate the ctcr. Typically set to the number of tubes.
+            Number of polynomials used to approximate the cr. Typically set to the number of tubes.
 
         K : int
             Degree used for the polynomials.
@@ -173,9 +172,57 @@ def __curvature_matrix_quat( ux, uy, uz ):
 CURVATURE_FCN = {'rotm':__curvature_matrix_rotm, 'quat':__curvature_matrix_quat}
 
 class TorchPolynomialCurve(nn.Module):
+    """
+        NOTE: It is not recommended to use this class. It was developed for research purposes, so it is kept for reference.
+        This class implements the a direct polynomial formulation for reconstructing a continuum robot's backbone.
+        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchParameterizedFunction objects.
+
+        Arguments
+        ----------
+        l : tensor
+            List of the lengths up to which the corresponding polynomial is used. Is
+            typically selected to be each NiTi tube's length outside of the actuation
+            unit.
+
+        p0 : 3-by-1 tensor
+            A 3D point where the CR exits the actuation unit in world
+            coordinates.
+
+        p0_parametric : boolean
+            If True, the initial position p0 is estimated as well.
+
+        ux : n-by-4 tensor or TorchParameterizedFunction
+            Initial guess for the parameters of the polynomials
+            for the x-curvatures of the n polynomials. If set to None it is either initialized
+            as 0s or uniformly distributed between -5 and 5 if random_init is True.
+
+        uy : n-by-4 tensor or TorchParameterizedFunction
+            Initial guess for the parameters of the polynomials
+            for the y-curvatures of the n polynomials. If set to None it is either initialized
+            as 0s or uniformly distributed between -5 and 5 if random_init is True.
+
+        uz : n-by-4 tensor or TorchParameterizedFunction
+            Initial guess for the parameters of the polynomials
+            for the z-curvatures of the n polynomials. If set to None it is either initialized
+            as 0s or uniformly distributed between -5 and 5 if random_init is True.
+
+        optimize : list of 3 booleans
+            If True, the corresponding curvature [ ux, uy, uz ] is optimized during the fitting process. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
+
+        continuous_u : list of 3 booleans
+            If true, the corresponding curvature [ ux, uy, uz ] is enforced to be continuous. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
+
+        random_init : list of 3 booleans
+            If true, the corresponding curvature [ ux, uy, uz ] is randomly initialized. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
+
+    """
+    
     def __init__(
             self, l, p0=torch.zeros(3, 1), p0_parametric=False, 
-            ux=None, uy=None, uz=None, optimize=[True, True, True], continuous_u=[False, False, False], 
+            ux=None, uy=None, uz=None, optimize=[True, True, True], continuous_u=[True, True, True], 
             random_init=[False] * 3 
             ):
         super().__init__()
@@ -190,17 +237,17 @@ class TorchPolynomialCurve(nn.Module):
         else:
             self.p0 = p0
             
-        if issubclass(type(ux), TorchCurvature):  # Check if ux is already a TorchCurvature.
+        if issubclass(type(ux), TorchParameterizedFunction):  # Check if ux is already a TorchParameterizedFunction.
             self.ux = ux
         else:  # If not, initialize it as a Polynomial3Torch.
             self.ux = Polynomial3Torch(self.n, ux, optimize=optimize[0], continuous=continuous_u[0], random_init=random_init[0])
 
-        if issubclass(type(uy), TorchCurvature):  # Check if uy is already a TorchCurvature.
+        if issubclass(type(uy), TorchParameterizedFunction):  # Check if uy is already a TorchParameterizedFunction.
             self.uy = uy
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uy = Polynomial3Torch(self.n, uy, optimize=optimize[1], continuous=continuous_u[1], random_init=random_init[1])
 
-        if issubclass(type(uz), TorchCurvature):  # Check if uz is already a TorchCurvature.
+        if issubclass(type(uz), TorchParameterizedFunction):  # Check if uz is already a TorchParameterizedFunction.
             self.uz = uz
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uz = Polynomial3Torch(self.n, uz, optimize=optimize[2], continuous=continuous_u[2], random_init=random_init[2])
@@ -234,10 +281,10 @@ class TorchPolynomialCurve(nn.Module):
         return p.T
 
 
-class TorchRotationFrame(nn.Module):
-    r"""
-        This class implements the rotation frame formulation for reconstructing a continuum robot's backbone.
-        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchCurvature objects.
+class TorchMovingFrame(nn.Module):
+    """
+        This class implements the moving frame formulation for reconstructing a continuum robot's backbone.
+        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchParameterizedFunction objects.
 
         Arguments
         ----------
@@ -247,7 +294,7 @@ class TorchRotationFrame(nn.Module):
             unit.
 
         p0 : 3-by-1 tensor
-            A 3D point where the CTCR exits the actuation unit in world
+            A 3D point where the CR exits the actuation unit in world
             coordinates.
 
         p0_parametric : boolean
@@ -255,27 +302,31 @@ class TorchRotationFrame(nn.Module):
 
         R0 : 3-by-3 or 4-by-1 tensor
             Either a 3-by-3 matrix from SO(3) that describes the orientation of
-            the exiting CTCR (ref. [1]) or, if R0_parametric is True, tensor of
+            the exiting CR (ref. [1]) or, if R0_parametric is True, tensor of
             shape (4,). The matrix is then parametrized using quaternions.
 
         R0_parametric : boolean
             If True, the initial orientation R0 is estimated as well. To ensure
             that R0 remains inside SO(3), it is parameterized using quaternions.
 
-        ux : n-by-4 tensor or TorchCurvature
+        ux : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the x-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uy : n-by-4 tensor or TorchCurvature
+        uy : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the y-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uz : n-by-4 tensor or TorchCurvature
+        uz : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the z-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
+
+        optimize : list of 3 booleans
+            If True, the corresponding curvature [ ux, uy, uz ] is optimized during the fitting process. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         integrator : str
             Integration method from the following list:
@@ -294,10 +345,12 @@ class TorchRotationFrame(nn.Module):
             The midpoint rule typically gives a good trade-off between accuracy and speed.
 
         continuous_u : list of 3 booleans
-            If true, the corresponding curvature [ ux, uy, uz ] is enforced to be continuous.
+            If true, the corresponding curvature [ ux, uy, uz ] is enforced to be continuous. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         random_init : list of 3 booleans
-            If true, the corresponding curvature [ ux, uy, uz ] is randomly initialized.
+            If true, the corresponding curvature [ ux, uy, uz ] is randomly initialized. Only used if the 
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         Sources
         ----------
@@ -361,17 +414,17 @@ class TorchRotationFrame(nn.Module):
         self.ode = self.__quat_ode if rotation_method == "quat" else self.__rotm_ode
         self.curvature_mat_fcn = CURVATURE_FCN[rotation_method]
 
-        if issubclass(type(ux), TorchCurvature):  # Check if ux is already a TorchCurvature.
+        if issubclass(type(ux), TorchParameterizedFunction):  # Check if ux is already a TorchParameterizedFunction.
             self.ux = ux
         else:  # If not, initialize it as a Polynomial3Torch.
             self.ux = Polynomial3Torch(self.n, ux, optimize=optimize[0], continuous=continuous_u[0], random_init=random_init[0])
 
-        if issubclass(type(uy), TorchCurvature):  # Check if uy is already a TorchCurvature.
+        if issubclass(type(uy), TorchParameterizedFunction):  # Check if uy is already a TorchParameterizedFunction.
             self.uy = uy
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uy = Polynomial3Torch(self.n, uy, optimize=optimize[1], continuous=continuous_u[1], random_init=random_init[1])
 
-        if issubclass(type(uz), TorchCurvature):  # Check if uz is already a TorchCurvature.
+        if issubclass(type(uz), TorchParameterizedFunction):  # Check if uz is already a TorchParameterizedFunction.
             self.uz = uz
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uz = Polynomial3Torch(self.n, uz, optimize=optimize[2], continuous=continuous_u[2], random_init=random_init[2])
@@ -442,7 +495,7 @@ class TorchRotationFrame(nn.Module):
        
     def __quat_ode( self, s, x ):
         """
-            Right-hand side of the quaternion Frenet-Serret ODE.
+            Right-hand side of the quaternion moving frame ODE.
 
             Arguments
             ----------
@@ -450,8 +503,8 @@ class TorchRotationFrame(nn.Module):
                 The current value of the arc-length.
 
             x : 7-by-1 float tensor
-                The current state x = [p, q]. p is the position of the CTCR in world coordinates and q is the rotation matrix describing the orientation of the
-                CTCR at the current arc-length.
+                The current state x = [p, q]. p is the position of the CR in world coordinates and q is the quaternion describing the orientation of the
+                CR at the current arc-length.
         """
         q = x[3:]
         dp1 = (q[1]*q[3]+q[0]*q[2])
@@ -463,7 +516,7 @@ class TorchRotationFrame(nn.Module):
     
     def __rotm_ode( self, s, x ):
         """
-            Right-hand side of the Frenet-Serret ODE.
+            Right-hand side of the moving frame ODE.
 
             Arguments
             ----------
@@ -471,8 +524,8 @@ class TorchRotationFrame(nn.Module):
                 The current value of the arc-length.
 
             x : 12-by-1 float tensor
-                The current state x = [p, R]. p is the position of the CTCR in world coordinates and R is the rotation matrix describing the orientation of the
-                CTCR at the current arc-length.
+                The current state x = [p, R]. p is the position of the CR in world coordinates and R is the rotation matrix describing the orientation of the
+                CR at the current arc-length.
         """
         R = x[3:].reshape((3, 3))
 
@@ -481,7 +534,7 @@ class TorchRotationFrame(nn.Module):
         return torch.concat((dp, dR), 0)
     
 
-class TorchCurveEstimator(nn.Module):
+class TorchCurveEstimator():
     r"""
         This class implements the PyTorch-based curve estimator (TCE) for continuum robots.
         The TCE takes a parameterized model for the continuum robot - this can be a rotation
@@ -491,8 +544,8 @@ class TorchCurveEstimator(nn.Module):
         Arguments
         ----------
         curve_model : nn.Module
-            A 3D point where the CTCR exits the actuation unit in world
-            coordinates.
+            PyTorch model that parameterizes the reconstruction of thecontinuum robot. The model has to be
+            callable with the arc-length as the only argument.
         
         l : positive scalar
             The length of the continuum robot from the starting position to the tip of the robot.
@@ -503,14 +556,14 @@ class TorchCurveEstimator(nn.Module):
             automatically generate this list for you.
 
         n_steps : int
-            Number of intermediate steps to evaluate the reconstructed ctcr at.
+            Number of intermediate steps to evaluate the reconstructed cr at.
             If low, the computation is fast, but for very low values the convergence might
             be bad. If high, a better solution might be found, at cost of higher computation
             times.
 
         w : double
             Weighting of the two cost functions. 0 (only track distance of pixels to
-            reconstruction) is typically a good value, but if parts of the ctcr are occluded,
+            reconstruction) is typically a good value, but if parts of the cr are occluded,
             increasing w can help.
 
         dist_norm : int
@@ -556,14 +609,14 @@ class TorchCurveEstimator(nn.Module):
         self.pixel_diff_state = None
         self.backbone_diff_state = None
 
-    def get_pixel_diff_idx( self, ctcr_img_coordinates, img_idx_data ):
+    def get_pixel_diff_idx( self, cr_img_coordinates, img_idx_data ):
         """
-            Computes for each CTCR pixel the index of the closest reconstruction pixel.
+            Computes for each CR pixel the index of the closest reconstruction pixel.
 
             Arguments
             ----------
-            ctcr_img_coordinates : m-by-2 int
-                Coordinates of CTCR pixels in image coordinates.
+            cr_img_coordinates : m-by-2 int
+                Coordinates of CR pixels in image coordinates.
 
             img_idx_data : m-by-1 int
                 Vector containing the index from which image the corresponding img_coordinates entry was taken.
@@ -571,55 +624,52 @@ class TorchCurveEstimator(nn.Module):
         backbone_img_coordinates = self.get_img_coordinates()
         if self.pixel_diff_state is None:
             idx_min_dist = []
-            ctcr_img_coordinates_sorted = []
+            cr_img_coordinates_sorted = []
             for i in np.unique(np.unique(img_idx_data)):
-                ctcr_img_coordinates_i = ctcr_img_coordinates[img_idx_data == i, :]
-                # _, idc_min = brute_force_distance_norm(ctcr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
-                idc_min = ball_tree_norm(ctcr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
+                cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
+                # _, idc_min = brute_force_distance_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
+                idc_min = ball_tree_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
                 idx_min_dist.append(idc_min)
-                ctcr_img_coordinates_sorted.append(ctcr_img_coordinates_i)
-            self.pixel_diff_state = dict(idx_min_dist=idx_min_dist, ctcr_img_coordinates_sorted=ctcr_img_coordinates_sorted)
+                cr_img_coordinates_sorted.append(cr_img_coordinates_i)
+            self.pixel_diff_state = dict(idx_min_dist=idx_min_dist, cr_img_coordinates_sorted=cr_img_coordinates_sorted)
         
-        # TODO!!!!!!!!!!!!!!!!!!!
-        # Direkt die korrekten Distanzen von brute_force... nutzen und wenn sich nichts ändert, nur dann die Distanzen neu berechnen
-        
-        return self.pixel_diff_state["idx_min_dist"], self.pixel_diff_state["ctcr_img_coordinates_sorted"]
+        return self.pixel_diff_state["idx_min_dist"], self.pixel_diff_state["cr_img_coordinates_sorted"]
 
-    def pixel_diff( self, ctcr_img_coordinates, img_idx_data ):
+    def pixel_diff( self, cr_img_coordinates, img_idx_data ):
         """
-            Compute the distance of each CTCR pixel to the closest reconstruction point in image coordinates.
+            Compute the distance of each CR pixel to the closest reconstruction point in image coordinates.
 
             Arguments
             ----------
-            ctcr_img_coordinates : m-by-2 tensor
-                Tensor containing the image coordinates of CTCR pixels.
+            cr_img_coordinates : m-by-2 tensor
+                Tensor containing the image coordinates of CR pixels.
 
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
-        idx_min_dist, ctcr_img_coordinates_sorted = self.get_pixel_diff_idx(ctcr_img_coordinates, img_idx_data)
+        idx_min_dist, cr_img_coordinates_sorted = self.get_pixel_diff_idx(cr_img_coordinates, img_idx_data)
         for i in np.unique(img_idx_data):
-            diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - ctcr_img_coordinates_sorted[i] if diffs is None else torch.concatenate(
-                (diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - ctcr_img_coordinates_sorted[i]), 0)
+            diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i] if diffs is None else torch.concatenate(
+                (diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i]), 0)
         return diffs
 
-    def pixel_loss( self, ctcr_img_coordinates, img_idx_data ):
+    def pixel_loss( self, cr_img_coordinates, img_idx_data ):
         """
-            Computes the average distance of each CTCR pixel to the corresponding backbone point.
+            Computes the average distance of each CR pixel to the corresponding backbone point.
         """
         # Penalizes the minimum distance of each measurement point to the reconstructed curve.
-        return torch.linalg.vector_norm(self.pixel_diff(ctcr_img_coordinates, img_idx_data), self.dist_norm, 1).mean()  # **self.dist_norm
+        return torch.linalg.vector_norm(self.pixel_diff(cr_img_coordinates, img_idx_data), self.dist_norm, 1).mean()  # **self.dist_norm
 
-    def get_backbone_diff_idx( self, ctcr_img_coordinates, img_idx_data ):
+    def get_backbone_diff_idx( self, cr_img_coordinates, img_idx_data ):
         """
-            Computes for each backbone point in image coordinates the index of the closest CTCR pixel .
+            Computes for each backbone point in image coordinates the index of the closest CR pixel .
 
             Arguments
             ----------
-            ctcr_img_coordinates : m-by-2 int
-                Coordinates of CTCR pixels in image coordinates.
+            cr_img_coordinates : m-by-2 int
+                Coordinates of CR pixels in image coordinates.
 
             img_idx_data : m-by-1 int
                 Vector containing the index from which image the corresponding img_coordinates entry was taken.
@@ -628,39 +678,39 @@ class TorchCurveEstimator(nn.Module):
         backbone_img_coordinates = self.get_img_coordinates()
         if self.backbone_diff_state is None:
             idx_min_dist = []
-            ctcr_img_coordinates_sorted = []
+            cr_img_coordinates_sorted = []
             for i in np.unique(np.unique(img_idx_data)):
-                ctcr_img_coordinates_i = ctcr_img_coordinates[img_idx_data == i, :]
-                # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], ctcr_img_coordinates_i.float(), p=self.dist_norm)
-                idc_min = ball_tree_norm(backbone_img_coordinates[i], ctcr_img_coordinates_i.float(), p=self.dist_norm)
+                cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
+                # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
+                idc_min = ball_tree_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
                 idx_min_dist.append(idc_min)
-                ctcr_img_coordinates_sorted.append(ctcr_img_coordinates_i)
-            self.backbone_diff_state = dict(idx_min_dist=idx_min_dist, ctcr_img_coordinates_sorted=ctcr_img_coordinates_sorted)
-        return self.backbone_diff_state["idx_min_dist"], self.backbone_diff_state["ctcr_img_coordinates_sorted"]
+                cr_img_coordinates_sorted.append(cr_img_coordinates_i)
+            self.backbone_diff_state = dict(idx_min_dist=idx_min_dist, cr_img_coordinates_sorted=cr_img_coordinates_sorted)
+        return self.backbone_diff_state["idx_min_dist"], self.backbone_diff_state["cr_img_coordinates_sorted"]
 
-    def backbone_diff( self, ctcr_img_coordinates, img_idx_data ):
+    def backbone_diff( self, cr_img_coordinates, img_idx_data ):
         """
-            Compute the distance of each CTCR pixel to the closest reconstruction point in image coordinates.
+            Compute the distance of each CR pixel to the closest reconstruction point in image coordinates.
 
             Arguments
             ----------
-            ctcr_img_coordinates : m-by-2 tensor
-                Tensor containing the image coordinates of CTCR pixels.
+            cr_img_coordinates : m-by-2 tensor
+                Tensor containing the image coordinates of CR pixels.
 
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
-        idx_min_dist, ctcr_img_coordinates_sorted = self.get_backbone_diff_idx(ctcr_img_coordinates, img_idx_data)
+        idx_min_dist, cr_img_coordinates_sorted = self.get_backbone_diff_idx(cr_img_coordinates, img_idx_data)
         for i in np.unique(img_idx_data):
-            diffs = curve_pixel_coordinates[i] - ctcr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else torch.concatenate(
-                (diffs, curve_pixel_coordinates[i] - ctcr_img_coordinates_sorted[i][idx_min_dist[i], :]), 0)
+            diffs = curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else torch.concatenate(
+                (diffs, curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :]), 0)
         return diffs
 
     def backbone_loss( self, img_coordinates, img_idx_data ):
         """
-            Computes the average distance of each backbone point to the corresponding CTCR pixel.
+            Computes the average distance of each backbone point to the corresponding CR pixel.
         """
         # Penalizes the minimum distance of each measurement point to the reconstructed curve.
         return torch.linalg.vector_norm(self.backbone_diff(img_coordinates, img_idx_data), self.dist_norm, 1).mean()  # **self.dist_norm
@@ -672,7 +722,7 @@ class TorchCurveEstimator(nn.Module):
             Arguments
             ----------
             img_coordinates : m-by-2 tensor
-                Tensor containing the image coordinates of CTCR pixels.
+                Tensor containing the image coordinates of CR pixels.
 
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
@@ -688,7 +738,7 @@ class TorchCurveEstimator(nn.Module):
         """
             Cost function for a labeled set of 3D points with their corresponding arc-length. The weight w is used to
             weight the two cost functions, average distance of the backbone points to the 3D points and distance of the
-            tip of the ctcr to the last 3D point.
+            tip of the cr to the last 3D point.
 
             Arguments
             ----------
@@ -696,16 +746,16 @@ class TorchCurveEstimator(nn.Module):
                 Tensor of (approximated) arc-lengths.
 
             pts : m-by-3 tensor
-                3D points of the ctcr that are known.
+                3D points of the cr that are known.
         """
         pt_idc_0 = torch.argmin(torch.abs(self.s_val.reshape(-1, 1) - s.reshape(1, -1)), 0)
         backbone_pts = self.curve_model(self.s_val)
         return ((1 - self.w) * torch.linalg.vector_norm(backbone_pts[pt_idc_0, :] - pts, self.dist_norm, 1).mean() + self.w * torch.linalg.vector_norm(
             pts[-1, :] - pts[-1, :], self.dist_norm, 0))
 
-    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, repetitions=1, grad_tol=1e-4, scheduler=None ):
+    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, lr=0.2, repetitions=1, grad_tol=1e-4, scheduler=None ):
         """
-            Run the optimization given the the image coordinates of the CTCR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
+            Run the optimization given the the image coordinates of the CR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
             are reset after each gradient descent step.
 
             Arguments
@@ -714,14 +764,17 @@ class TorchCurveEstimator(nn.Module):
                 Adam with a small weight decay value (1e-6) is recommended.
 
             pixel_list : list
-                List of pixels corresponding to the CTCR in each image. The length has to match
+                List of pixels corresponding to the CR in each image. The length has to match
                 the number of camera calibration parameters.
 
             n_iter : int
                 Number of epochs, so how often the data set is used for optimization.
 
+            lr : double
+                Learning rate of the default optimizer.
+
             batch_size : int
-                Number of CTCR pixels used per Stochastic Gradient Descent step.
+                Number of CR pixels used per Stochastic Gradient Descent step.
 
             repetitions : int
                 Number how often the same batch is reused, reducing the need for recalculating the point correspondances.
@@ -731,14 +784,14 @@ class TorchCurveEstimator(nn.Module):
                 early.
         """
         if len(pixel_list) != len(self.camera_calibration_parameters):
-            raise Exception("The list containing the pixel positions of the ctcr has to match in length the number of given camera calibration parameters.")
+            raise Exception("The list containing the pixel positions of the CR has to match in length the number of given camera calibration parameters.")
 
         if optimizer is None:
-            optimizer = torch.optim.Adam(self.parameters(), 0.02, weight_decay=1e-6)
+            optimizer = torch.optim.Adam(self.curve_model.parameters(), lr, weight_decay=1e-6)
             
         use_scheduler = scheduler is not None
 
-        dataset = CannulaPixelDataset(pixel_list)
+        dataset = PixelDataset(pixel_list)
         
         loss_hist = []
 
@@ -749,7 +802,7 @@ class TorchCurveEstimator(nn.Module):
         with torch.no_grad():
             loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
             lowest_loss = loss_hist[-1]
-            best_model = deepcopy(self.state_dict())
+            best_model = deepcopy(self.curve_model.state_dict())
         
         for i in range(1, n_iter + 1):
             with tqdm(enumerate(dataloader)) as pbar:
@@ -769,86 +822,18 @@ class TorchCurveEstimator(nn.Module):
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
-                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.parameters()]).bool()):
+                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
                             break
                     self.reset_diff_states()
                     for f in self.post_epoch_cb:
                         f(self)
             
-            if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.parameters()]).bool()):
+            if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
                 break
             with torch.no_grad():
                 loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
             if loss_hist[-1] < lowest_loss:
-                best_model = deepcopy(self.state_dict())
+                best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]
-        self.load_state_dict(best_model)
+        self.curve_model.load_state_dict(best_model)
         return loss_hist
-
-def image_to_idx( img ):
-    """
-        Transform the binary image (img) to coordinates.
-    """
-    im_idc = np.where(img.T)
-    return np.stack(im_idc, 1)
-
-
-def camera_folder_to_params( camera_folder, cams, package="torch" ):
-    """
-        Read the parameters from a folder using predefined file names.
-
-        Arguments
-        ----------
-        camera_folder : str
-            Folder containing the parameter files.
-
-        cams : int or list
-            Either the number of cameras to be used or a list of camera indices.
-    """
-    i_cams = cams if type(cams) is list else list(range(cams))
-
-    param_list = []
-    path = camera_folder if camera_folder[-1] == sep else camera_folder + sep
-    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float(), "casadi":lambda x: np.load(path + x)}[package]
-    for i in i_cams:
-        param_list.append({
-            "A": load_and_tensor(f"calib_A{i}.npy"),
-            "dist": load_and_tensor(f"calib_dist{i}.npy"),
-            "P": load_and_tensor(f"calib_P{i}_.npy"),
-            "R": load_and_tensor("cs_conversion_R.npy"),
-            "T": load_and_tensor("cs_conversion_T.npy")})
-    return param_list
-
-
-class CannulaPixelDataset(Dataset):
-    """
-        Dataset of all the pixel positions that correspond to the CTCR.
-
-        Arguments
-        ----------
-            p_list : list
-                List containing the pixel positions.
-
-        Returns
-        ----------
-            p : m-by-2 tensor
-                Tensor of pixel positions.
-
-            img_idx_data : m-by-1 tensor
-                Tensor containing the index of the corresponding camera.
-    """
-
-    def __init__( self, p_list ):
-        self.p = None
-        self.img_idx_data = None
-        for i in range(len(p_list)):
-            p = p_list[i]
-            self.p = p if self.p is None else np.concatenate((self.p, p), 0)
-            self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
-                (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
-
-    def __len__( self ):
-        return self.p.shape[0]
-
-    def __getitem__( self, idx ):
-        return (self.p[idx, :], self.img_idx_data[idx])
