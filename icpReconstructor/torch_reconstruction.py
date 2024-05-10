@@ -7,19 +7,18 @@ The package needs a PyTorch build with LAPACK/BLAS, the easiest way for getting 
 import torch
 import torch.nn as nn
 import numpy as np
-from .utils import fromWorld2Img, ball_tree_norm
+from .utils import fromWorld2Img, ball_tree_norm, PixelDataset
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint as odeint
-from torch.utils.data import Dataset, DataLoader
-from os.path import sep
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
 
 
-class TorchCurvature(nn.Module, ABC):
+class TorchParameterizedFunction(nn.Module, ABC):
     """
-        Class for storing parameterized curvature functions for usage with TorchMovingFrame.
+        Class for storing parameterized functions for usage with TorchMovingFrame.
         Can also be used for other models like polynomials, but it's original purpose was the
         usage as curvature polynomials.
     """
@@ -29,7 +28,7 @@ class TorchCurvature(nn.Module, ABC):
         pass
 
 
-class Polynomial3Torch(TorchCurvature):
+class Polynomial3Torch(TorchParameterizedFunction):
     r"""
         Parameterization of degree 3 polynomials. The parameters are the function value and the derivative at start and end.
         This, for example, allows for easy initialization given simulation results from physics-based models.
@@ -104,7 +103,7 @@ class Polynomial3Torch(TorchCurvature):
         return u_fun
 
 
-class PolynomialKTorch(TorchCurvature):
+class PolynomialKTorch(TorchParameterizedFunction):
     r"""
         Parameterization of degree K polynomials for the curvatures used by TorchMovingFrame.
 
@@ -176,7 +175,7 @@ class TorchPolynomialCurve(nn.Module):
     """
         NOTE: It is not recommended to use this class. It was developed for research purposes, so it is kept for reference.
         This class implements the a direct polynomial formulation for reconstructing a continuum robot's backbone.
-        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchCurvature objects.
+        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchParameterizedFunction objects.
 
         Arguments
         ----------
@@ -192,32 +191,32 @@ class TorchPolynomialCurve(nn.Module):
         p0_parametric : boolean
             If True, the initial position p0 is estimated as well.
 
-        ux : n-by-4 tensor or TorchCurvature
+        ux : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the x-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uy : n-by-4 tensor or TorchCurvature
+        uy : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the y-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uz : n-by-4 tensor or TorchCurvature
+        uz : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the z-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
         optimize : list of 3 booleans
             If True, the corresponding curvature [ ux, uy, uz ] is optimized during the fitting process. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         continuous_u : list of 3 booleans
             If true, the corresponding curvature [ ux, uy, uz ] is enforced to be continuous. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         random_init : list of 3 booleans
             If true, the corresponding curvature [ ux, uy, uz ] is randomly initialized. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
     """
     
@@ -238,17 +237,17 @@ class TorchPolynomialCurve(nn.Module):
         else:
             self.p0 = p0
             
-        if issubclass(type(ux), TorchCurvature):  # Check if ux is already a TorchCurvature.
+        if issubclass(type(ux), TorchParameterizedFunction):  # Check if ux is already a TorchParameterizedFunction.
             self.ux = ux
         else:  # If not, initialize it as a Polynomial3Torch.
             self.ux = Polynomial3Torch(self.n, ux, optimize=optimize[0], continuous=continuous_u[0], random_init=random_init[0])
 
-        if issubclass(type(uy), TorchCurvature):  # Check if uy is already a TorchCurvature.
+        if issubclass(type(uy), TorchParameterizedFunction):  # Check if uy is already a TorchParameterizedFunction.
             self.uy = uy
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uy = Polynomial3Torch(self.n, uy, optimize=optimize[1], continuous=continuous_u[1], random_init=random_init[1])
 
-        if issubclass(type(uz), TorchCurvature):  # Check if uz is already a TorchCurvature.
+        if issubclass(type(uz), TorchParameterizedFunction):  # Check if uz is already a TorchParameterizedFunction.
             self.uz = uz
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uz = Polynomial3Torch(self.n, uz, optimize=optimize[2], continuous=continuous_u[2], random_init=random_init[2])
@@ -285,7 +284,7 @@ class TorchPolynomialCurve(nn.Module):
 class TorchMovingFrame(nn.Module):
     """
         This class implements the moving frame formulation for reconstructing a continuum robot's backbone.
-        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchCurvature objects.
+        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchParameterizedFunction objects.
 
         Arguments
         ----------
@@ -310,24 +309,24 @@ class TorchMovingFrame(nn.Module):
             If True, the initial orientation R0 is estimated as well. To ensure
             that R0 remains inside SO(3), it is parameterized using quaternions.
 
-        ux : n-by-4 tensor or TorchCurvature
+        ux : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the x-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uy : n-by-4 tensor or TorchCurvature
+        uy : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the y-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uz : n-by-4 tensor or TorchCurvature
+        uz : n-by-4 tensor or TorchParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the z-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
         optimize : list of 3 booleans
             If True, the corresponding curvature [ ux, uy, uz ] is optimized during the fitting process. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         integrator : str
             Integration method from the following list:
@@ -347,11 +346,11 @@ class TorchMovingFrame(nn.Module):
 
         continuous_u : list of 3 booleans
             If true, the corresponding curvature [ ux, uy, uz ] is enforced to be continuous. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         random_init : list of 3 booleans
             If true, the corresponding curvature [ ux, uy, uz ] is randomly initialized. Only used if the 
-            corresponding curvature is not given as a TorchCurvature object.
+            corresponding curvature is not given as a TorchParameterizedFunction object.
 
         Sources
         ----------
@@ -415,17 +414,17 @@ class TorchMovingFrame(nn.Module):
         self.ode = self.__quat_ode if rotation_method == "quat" else self.__rotm_ode
         self.curvature_mat_fcn = CURVATURE_FCN[rotation_method]
 
-        if issubclass(type(ux), TorchCurvature):  # Check if ux is already a TorchCurvature.
+        if issubclass(type(ux), TorchParameterizedFunction):  # Check if ux is already a TorchParameterizedFunction.
             self.ux = ux
         else:  # If not, initialize it as a Polynomial3Torch.
             self.ux = Polynomial3Torch(self.n, ux, optimize=optimize[0], continuous=continuous_u[0], random_init=random_init[0])
 
-        if issubclass(type(uy), TorchCurvature):  # Check if uy is already a TorchCurvature.
+        if issubclass(type(uy), TorchParameterizedFunction):  # Check if uy is already a TorchParameterizedFunction.
             self.uy = uy
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uy = Polynomial3Torch(self.n, uy, optimize=optimize[1], continuous=continuous_u[1], random_init=random_init[1])
 
-        if issubclass(type(uz), TorchCurvature):  # Check if uz is already a TorchCurvature.
+        if issubclass(type(uz), TorchParameterizedFunction):  # Check if uz is already a TorchParameterizedFunction.
             self.uz = uz
         else:  # If not, initialize it as a Polynomial3Torch.
             self.uz = Polynomial3Torch(self.n, uz, optimize=optimize[2], continuous=continuous_u[2], random_init=random_init[2])
@@ -785,7 +784,7 @@ class TorchCurveEstimator():
                 early.
         """
         if len(pixel_list) != len(self.camera_calibration_parameters):
-            raise Exception("The list containing the pixel positions of the cr has to match in length the number of given camera calibration parameters.")
+            raise Exception("The list containing the pixel positions of the CR has to match in length the number of given camera calibration parameters.")
 
         if optimizer is None:
             optimizer = torch.optim.Adam(self.curve_model.parameters(), lr, weight_decay=1e-6)
@@ -838,71 +837,3 @@ class TorchCurveEstimator():
                 lowest_loss = loss_hist[-1]
         self.curve_model.load_state_dict(best_model)
         return loss_hist
-
-def image_to_idx( img ):
-    """
-        Transform the binary image (img) to coordinates.
-    """
-    im_idc = np.where(img.T)
-    return np.stack(im_idc, 1)
-
-
-def camera_folder_to_params( camera_folder, cams, package="torch" ):
-    """
-        Read the parameters from a folder using predefined file names.
-
-        Arguments
-        ----------
-        camera_folder : str
-            Folder containing the parameter files.
-
-        cams : int or list
-            Either the number of cameras to be used or a list of camera indices.
-    """
-    i_cams = cams if type(cams) is list else list(range(cams))
-
-    param_list = []
-    path = camera_folder if camera_folder[-1] == sep else camera_folder + sep
-    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float(), "casadi":lambda x: np.load(path + x)}[package]
-    for i in i_cams:
-        param_list.append({
-            "A": load_and_tensor(f"calib_A{i}.npy"),
-            "dist": load_and_tensor(f"calib_dist{i}.npy"),
-            "P": load_and_tensor(f"calib_P{i}_.npy"),
-            "R": load_and_tensor("cs_conversion_R.npy"),
-            "T": load_and_tensor("cs_conversion_T.npy")})
-    return param_list
-
-
-class PixelDataset(Dataset):
-    """
-        Dataset of all the pixel positions that correspond to the CR.
-
-        Arguments
-        ----------
-            p_list : list
-                List containing the pixel positions.
-
-        Returns
-        ----------
-            p : m-by-2 tensor
-                Tensor of pixel positions.
-
-            img_idx_data : m-by-1 tensor
-                Tensor containing the index of the corresponding camera.
-    """
-
-    def __init__( self, p_list ):
-        self.p = None
-        self.img_idx_data = None
-        for i in range(len(p_list)):
-            p = p_list[i]
-            self.p = p if self.p is None else np.concatenate((self.p, p), 0)
-            self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
-                (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
-
-    def __len__( self ):
-        return self.p.shape[0]
-
-    def __getitem__( self, idx ):
-        return (self.p[idx, :], self.img_idx_data[idx])

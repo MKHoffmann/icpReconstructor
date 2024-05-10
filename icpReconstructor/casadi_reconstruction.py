@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from .utils import discretizeODE, fromWorld2ImgCasadi
 
 
-class ParameterFunctionCasadi(ABC):
+class CasadiParameterizedFunction(ABC):
     """
         Class for storing parameterized functions for usage with Casadi. Allows for fast initialization
         of corresponding PyTorch modules.
@@ -20,7 +20,7 @@ class ParameterFunctionCasadi(ABC):
         pass
 
 
-class Polynomial3Casadi(ParameterFunctionCasadi):
+class Polynomial3Casadi(CasadiParameterizedFunction):
     r"""
        Parameterization of third-order polynomials. The parameters are the function value and the derivative at start and end.
        This, for example, allows for easy initialization given simulation results from physics-based models.
@@ -112,7 +112,7 @@ class Polynomial3Casadi(ParameterFunctionCasadi):
         return self.u_p
 
 
-class PolynomialKCasadi(ParameterFunctionCasadi):
+class PolynomialKCasadi(CasadiParameterizedFunction):
     r"""
             Parameterization of degree K polynomials. This implementation uses Casadi for the optimization.
 
@@ -199,7 +199,7 @@ class CasadiCurveModel(ABC):
 class CasadiMovingFrame(CasadiCurveModel):
     r"""
         This class implements the rotation frame formulation for reconstructing a continuum robot's backbone.
-        The parameterization of the curvatures ux, uy, and uz is achieved by providing TorchCurvature objects.
+        The parameterization of the curvatures ux, uy, and uz is achieved by providing CasadiParameterizedFunction objects.
 
         Arguments
         ----------
@@ -224,17 +224,17 @@ class CasadiMovingFrame(CasadiCurveModel):
             If True, the initial orientation R0 is estimated as well. To ensure
             that R0 remains inside SO(3), it is parameterized using quaternions.
 
-        ux : n-by-4 tensor or TorchCurvature
+        ux : n-by-4 tensor or CasadiParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the x-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uy : n-by-4 tensor or TorchCurvature
+        uy : n-by-4 tensor or CasadiParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the y-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
 
-        uz : n-by-4 tensor or TorchCurvature
+        uz : n-by-4 tensor or CasadiParameterizedFunction
             Initial guess for the parameters of the polynomials
             for the z-curvatures of the n polynomials. If set to None it is either initialized
             as 0s or uniformly distributed between -5 and 5 if random_init is True.
@@ -336,7 +336,7 @@ class CasadiMovingFrame(CasadiCurveModel):
 
     @ux.setter
     def ux( self, value ):
-        if issubclass(type(value), ParameterFunctionCasadi):
+        if issubclass(type(value), CasadiParameterizedFunction):
             self.__ux = value
         else:
             self.__ux = Polynomial3Casadi(
@@ -349,7 +349,7 @@ class CasadiMovingFrame(CasadiCurveModel):
 
     @uy.setter
     def uy( self, value ):
-        if issubclass(type(value), ParameterFunctionCasadi):
+        if issubclass(type(value), CasadiParameterizedFunction):
             self.__uy = value
         else:
             self.__uy = Polynomial3Casadi(
@@ -362,7 +362,7 @@ class CasadiMovingFrame(CasadiCurveModel):
 
     @uz.setter
     def uz( self, value ):
-        if issubclass(type(value), ParameterFunctionCasadi):
+        if issubclass(type(value), CasadiParameterizedFunction):
             self.__uz = value
         else:
             self.__uz = Polynomial3Casadi(
@@ -458,7 +458,7 @@ class CasadiMovingFrame(CasadiCurveModel):
 
     def setup( self, s=None ):
         """
-        Integrates the Serret-Frenet formulas using the selected method in the variable self.method and sets the continuity constraints for the
+        Integrates the moving frame formulas using the selected method in the variable self.method and sets the continuity constraints for the
         full-discretization of the ODE.
         """
         
@@ -471,8 +471,11 @@ class CasadiMovingFrame(CasadiCurveModel):
                 )
             )
             
-            
     def integrate( self, s ):
+        """
+        Integrates the moving frame formulas using the selected method in the variable self.method and returns the solution. Is used to reach arc-length steps 
+        between the ones used for the continuity constraints in setup.
+        """
         x = casadi.MX(12, s.shape[0])
         for i in range(s.shape[0]):
             # Find the index j of self.s_val, where self.s_val[j] <= s[i]
@@ -533,14 +536,14 @@ class CasadiCurveEstimator:
             automatically generate this list for you.
 
         n_steps : int
-            Number of intermediate steps to evaluate the reconstructed cr at.
+            Number of intermediate steps to evaluate the reconstructed CR at.
             If low, the computation is fast, but for very low values the convergence might
             be bad. If high, a better solution might be found, at cost of higher computation
             times.
 
         w : double
             Weighting of the two cost functions. 0 (only track distance of pixels to
-            reconstruction) is typically a good value, but if parts of the cr are occluded,
+            reconstruction) is typically a good value, but if parts of the CR are occluded,
             increasing w can help.
 
         dist_norm : int

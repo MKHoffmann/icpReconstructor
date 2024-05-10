@@ -1,8 +1,80 @@
-from . import casadi, np, torch
+import casadi
+import numpy as np
+import torch
 import networkx as nx
 from copy import copy
 from sklearn.neighbors import BallTree
+from torch.utils.data import Dataset
+from os.path import sep
 from skimage.morphology import skeletonize_3d
+
+def image_to_idx( img ):
+    """
+        Transform the binary image (img) to coordinates.
+    """
+    im_idc = np.where(img.T)
+    return np.stack(im_idc, 1)
+
+
+def camera_folder_to_params( camera_folder, cams, package="torch" ):
+    """
+        Read the parameters from a folder using predefined file names.
+
+        Arguments
+        ----------
+        camera_folder : str
+            Folder containing the parameter files.
+
+        cams : int or list
+            Either the number of cameras to be used or a list of camera indices.
+    """
+    i_cams = cams if type(cams) is list else list(range(cams))
+
+    param_list = []
+    path = camera_folder if camera_folder[-1] == sep else camera_folder + sep
+    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float(), "casadi":lambda x: np.load(path + x)}[package]
+    for i in i_cams:
+        param_list.append({
+            "A": load_and_tensor(f"calib_A{i}.npy"),
+            "dist": load_and_tensor(f"calib_dist{i}.npy"),
+            "P": load_and_tensor(f"calib_P{i}_.npy"),
+            "R": load_and_tensor("cs_conversion_R.npy"),
+            "T": load_and_tensor("cs_conversion_T.npy")})
+    return param_list
+
+
+class PixelDataset(Dataset):
+    """
+        Dataset of all the pixel positions that correspond to the CR.
+
+        Arguments
+        ----------
+            p_list : list
+                List containing the pixel positions.
+
+        Returns
+        ----------
+            p : m-by-2 tensor
+                Tensor of pixel positions.
+
+            img_idx_data : m-by-1 tensor
+                Tensor containing the index of the corresponding camera.
+    """
+
+    def __init__( self, p_list ):
+        self.p = None
+        self.img_idx_data = None
+        for i in range(len(p_list)):
+            p = p_list[i]
+            self.p = p if self.p is None else np.concatenate((self.p, p), 0)
+            self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
+                (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
+
+    def __len__( self ):
+        return self.p.shape[0]
+
+    def __getitem__( self, idx ):
+        return (self.p[idx, :], self.img_idx_data[idx])
 
 def brute_force_distance_norm(A, B, p):
     # Calculate distances using the p-norm
@@ -355,7 +427,7 @@ def fromWorld2Img(pos, A, dist, P, R, T):
    
     R_t = torch.linalg.solve(A, P).float()
     
-    # Convert from local coordinate system of the CTCR to the world coordinate system 
+    # Convert from local coordinate system of the CR to the world coordinate system 
     pos_camera = torch.linalg.solve(R, pos-T.reshape(3,1))
 
     pos_camera_h = torch.concat((pos_camera, torch.ones((1, pos_camera.shape[1]))), 0)
@@ -439,7 +511,7 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
 
     R_t = np.linalg.solve(A, P)
     
-    # Convert from local coordinate system of the CTCR to the world coordinate system 
+    # Convert from local coordinate system of the CR to the world coordinate system 
     pos_camera = R.T@(pos-T.reshape(3,1)) # casadi.solve?
 
     pos_camera_h = casadi.vertcat(pos_camera, casadi.MX.ones(1, pos_camera.shape[1]))

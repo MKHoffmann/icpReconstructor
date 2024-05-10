@@ -2,10 +2,10 @@ import sys
 
 sys.path.append("..")
 
-from icpReconstructor.torch_reconstruction import TorchMovingFrame, image_to_idx, camera_folder_to_params, PixelDataset
+from icpReconstructor.torch_reconstruction import TorchMovingFrame
 from icpReconstructor.epipolar_reconstruction import EpipolarReconstructor
 from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
-from icpReconstructor.utils import fromWorld2Img
+from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params, PixelDataset
 import torch
 import matplotlib.pyplot as plt
 import numpy as np

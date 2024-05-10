@@ -4,12 +4,11 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
-from icpReconstructor.torch_reconstruction import TorchMovingFrame, image_to_idx, camera_folder_to_params, PixelDataset
+from icpReconstructor.torch_reconstruction import TorchMovingFrame, PixelDataset
 from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
-from icpReconstructor.utils import fromWorld2Img
+from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params, PixelDataset
 import torch
 import matplotlib.pyplot as plt
-import numpy as np
 from time import time
 from random import sample
 
@@ -25,7 +24,7 @@ cam_params = camera_folder_to_params(camera_folder, 2)
 cam_params_cas = camera_folder_to_params(camera_folder, 2, package="casadi")
 
 plot_curvature = True
-n_iter = 1
+n_iter = 8
 
 #%% Image data
 """
@@ -62,7 +61,7 @@ model.uy = uy
 model.add_u_constraint("x", -40, 40)
 model.add_u_constraint("y", -40, 40)
 
-cce = CasadiCurveEstimator(model, cam_params_cas, l[-1].detach().numpy(), dist_norm=8, w=0.5)
+cce = CasadiCurveEstimator(model, cam_params_cas, l[-1].detach().numpy(), dist_norm=2)
 
 cce.initial_solve()
 

@@ -4,9 +4,9 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
-from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchMovingFrame, TorchPolynomialCurve, Polynomial3Torch, image_to_idx, camera_folder_to_params, PolynomialKTorch
+from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchMovingFrame, TorchPolynomialCurve, Polynomial3Torch, PolynomialKTorch
 from skimage.morphology import disk, binary_dilation
-from icpReconstructor.utils import fromWorld2Img
+from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params
 import torch
 import matplotlib.pyplot as plt
 import numpy as np

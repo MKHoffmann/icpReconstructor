@@ -4,8 +4,8 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
-from icpReconstructor.torch_reconstruction import image_to_idx, camera_folder_to_params, PixelDataset
-from icpReconstructor.utils import spaceCarvingReconstruction, find_longest_path
+from icpReconstructor.torch_reconstruction import PixelDataset
+from icpReconstructor.utils import spaceCarvingReconstruction, find_longest_path, image_to_idx, camera_folder_to_params
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -40,7 +40,7 @@ x_bounds = [-0.01, 0.07]
 y_bounds = [-0.04, 0.02]
 z_bounds = [0, 0.16]
 
-path, pts_3d = spaceCarvingReconstruction(images, cam_params, x_bounds=x_bounds, y_bounds=y_bounds, z_bounds=z_bounds)
+path, pts_3d = spaceCarvingReconstruction(images, cam_params, x_bounds=x_bounds, y_bounds=y_bounds, z_bounds=z_bounds, repetitions=5)
 
 path_plot = path.detach().numpy()
 s_path = np.zeros(path.shape[0])

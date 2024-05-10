@@ -4,10 +4,10 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
-from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiRotationFrame
+from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
 from icpReconstructor.epipolar_reconstruction import EpipolarReconstructor
-from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchRotationFrame, image_to_idx, camera_folder_to_params
-from icpReconstructor.utils import fromWorld2Img
+from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchMovingFrame
+from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
@@ -81,7 +81,7 @@ print(f"3D reconstruction took {time()-now} s.")
 """
 curvature_options = {"continuous":False, "random_init":False, "end_no_curvature":False}
 
-model = CasadiRotationFrame(l.detach().numpy(), n_steps=40)
+model = CasadiMovingFrame(l.detach().numpy(), n_steps=40)
 n = len(l)
 ux = Polynomial3Casadi(model.opt, n, **curvature_options)
 uy = Polynomial3Casadi(model.opt, n, **curvature_options)
@@ -93,16 +93,16 @@ model.add_u_constraint("y", -40, 40)
 
 cce = CasadiCurveEstimator(model, cam_params_cas, l[-1].detach().numpy(), dist_norm=2) 
 
-(ux, uy, uz) = cce.solve_3d(Data_3d[:,3], Data_3d[:,:3].T, lam_2=5e-7)
+(ux, uy, uz) = cce.solve_3d(Data_3d[:,3], Data_3d[:,:3].T, lam_2=1e-6)
 ux = torch.from_numpy(ux).float()
 uy = torch.from_numpy(uy).float()
 uz = torch.from_numpy(uz).float()
 
 # %%
-curve = TorchRotationFrame(l, integrator="rk4", rotation_method="rotm", ux=ux, uy=uy, uz=uz)
+curve = TorchMovingFrame(l, integrator="rk4", rotation_method="rotm", ux=ux, uy=uy, uz=uz)
 tce = TorchCurveEstimator(curve, cam_params, l[-1], w=0.0, n_steps=40, dist_norm=2)
 if n_iter > 0:
-    optimizer = torch.optim.Adam(tce.parameters(), 0.15, weight_decay=0)
+    optimizer = torch.optim.Adam(curve.parameters(), 0.15, weight_decay=0)
     loss_hist = tce.fit([p0_img, p1_img], optimizer, n_iter=n_iter, batch_size=4000, repetitions=1)
 
 print(f"The algorithm ran {time()-now} s")
