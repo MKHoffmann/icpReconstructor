@@ -40,7 +40,7 @@ x_bounds = [-0.01, 0.07]
 y_bounds = [-0.04, 0.02]
 z_bounds = [0, 0.16]
 
-path, pts_3d = spaceCarvingReconstruction(images, cam_params, x_bounds=x_bounds, y_bounds=y_bounds, z_bounds=z_bounds, repetitions=5)
+path, pts_3d = spaceCarvingReconstruction(images, cam_params, x_bounds=x_bounds, y_bounds=y_bounds, z_bounds=z_bounds)
 
 path_plot = path.detach().numpy()
 s_path = np.zeros(path.shape[0])

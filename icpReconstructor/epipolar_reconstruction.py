@@ -28,7 +28,7 @@ class EpipolarReconstructor:
            R stands for the rotation matrix, and T represents the translation vector.
            
        bin_threshold : int
-           Set pixel value greater than or equal to bin_threshold to 255 and less than bin_threshold to 0, The recommended value is 200.
+           Set pixel value greater than or equal to bin_threshold to 255 and less than bin_threshold to 0. The recommended value is 200.
        
        tip_estimator_params_0, tip_estimator_params_1 : store data in MATLAB
            Defines the initial points and initial directions of the skeleton in camera 0 and camera 1.
