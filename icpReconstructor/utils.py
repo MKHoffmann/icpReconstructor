@@ -394,13 +394,13 @@ def fromWorld2Img(pos, A, dist, P, R, T):
             The distortion coefficients (k1, k2, p1, p2, k3) for radial and tangential distortion.
     
         P : torch.Tensor
-            The projection matrix (3x3) used to project 3D camera coordinates onto the image plane.
+            The projection matrix (3x4) used to project 3D camera coordinates onto the image plane.
     
         R : torch.Tensor
-            The rotation matrix (3x3) describing the orientation of the camera in the world.
+            The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
         T : torch.Tensor
-            The translation vector (3x1) describing the position of the camera in the world.
+            The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
         -------
@@ -428,28 +428,27 @@ def fromWorld2Img(pos, A, dist, P, R, T):
     R_t = torch.linalg.solve(A, P).float()
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = torch.linalg.solve(R, pos-T.reshape(3,1))
-
+    pos_camera = R.T@(pos-T.reshape(3,1))
     pos_camera_h = torch.concat((pos_camera, torch.ones((1, pos_camera.shape[1]))), 0)
     
     # Calculate normalized camera coordinates in Camera
     camPoint = torch.matmul(R_t, pos_camera_h)
     normCamPoint = camPoint[:2,:] / camPoint[2,:]
 
-    # Calculate Distortion
+    # Distort image
     k1, k2, p1, p2, k3 = dist
-    r = normCamPoint[0,:]**2 + normCamPoint[1,:]**2 
+    r_sq = normCamPoint[0,:]**2 + normCamPoint[1,:]**2 
 
-    radDist = 1.0 + k1*r + k2*r**2 + k3*r**3
-    tangDistX = 2*p1*normCamPoint[0,:]*normCamPoint[1] + p2*(r + 2*normCamPoint[0,:]**2)
-    tangDistY = p1*(r + 2*normCamPoint[1,:]**2) + 2*p2*normCamPoint[0,:]*normCamPoint[1,:]
+    radDist = 1.0 + k1*r_sq + k2*r_sq**2 + k3*r_sq**3
+    tangDistX = 2*p1*normCamPoint[0,:]*normCamPoint[1] + p2*(r_sq + 2*normCamPoint[0,:]**2)
+    tangDistY = p1*(r_sq + 2*normCamPoint[1,:]**2) + 2*p2*normCamPoint[0,:]*normCamPoint[1,:]
 
     # Add distortion
     x = radDist*normCamPoint[0,:] + tangDistX
     y = radDist*normCamPoint[1,:] + tangDistY
 
     # Calculate pixel coordinates in Camera
-    pixel =  torch.matmul(A,torch.stack([x, y, torch.ones_like(x)],0))[:2]
+    pixel = torch.matmul(A, torch.stack([x, y, torch.ones_like(x)],0))[:2]
     
     return pixel
 
@@ -483,10 +482,10 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
             The projection matrix (3x3) used to project 3D camera coordinates onto the image plane. This is a static matrix.
     
         R : numpy.ndarray
-            The rotation matrix (3x3) describing the orientation of the camera in the world. This is a static matrix.
+            The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
         T : numpy.ndarray
-            The translation vector (3x1) describing the position of the camera in the world. This is a static matrix.
+            The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
         -------
@@ -512,7 +511,7 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
     R_t = np.linalg.solve(A, P)
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = R.T@(pos-T.reshape(3,1)) # casadi.solve?
+    pos_camera = R.T@(pos-T.reshape(3,1))
 
     pos_camera_h = casadi.vertcat(pos_camera, casadi.MX.ones(1, pos_camera.shape[1]))
     
