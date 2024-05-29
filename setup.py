@@ -27,7 +27,8 @@ setup(
         'torchdiffeq >= 0.2.2',
         'torch >= 2.0.0',      
         'scikit-learn >= 1.2.0',
-        'scikit-image >= 0.20.0'
+        'scikit-image >= 0.20.0',
+        'tqdm >= 4.64.1'
     ],
     extras_require={
         'dev': ['check-manifest'],
