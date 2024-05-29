@@ -2,13 +2,13 @@ from setuptools import setup, find_packages
 
 setup(
     name='icpReconstructor',  
-    version='0.1.0', 
+    version='{{VERSION_PLACEHOLDER}}', 
     author='Matthias K. Hoffmann', 
     author_email='matthias.hoffmann@uni-saarland.de', 
     description='A package providing functionality to estimate the shape of continuum robots using the Iterative Closest Point algorithm.',  
     long_description=open('README.md').read(),  
     long_description_content_type='text/markdown',  
-    url='https://github.com/yourgithubusername/yourrepository', 
+    url='https://github.com/MKHoffmann/icpReconstructor', 
     packages=find_packages(),  # Automatically find all packages and subpackages
     classifiers=[
         'Development Status :: 5 - Production/Stable',  
