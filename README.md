@@ -4,7 +4,7 @@ This repository provides the implementations and examples used in our publicatio
 
 ## Overview
 
-This project arose from our work "An iterative closest point algorithm for marker-free 3D shape registration of continuum robots", available on [ArXiv](https://arxiv.org/abs/2405.15336), on the shape estimation of continuum robots (CR), more precisely concentric tube continuum robots we plan on using for minimally invasive neurosurgery procedures. The reconstruction of CRs involves finding the backbone -- the central line -- of the robot.
+This project arose from our work "An iterative closest point algorithm for marker-free 3D shape registration of continuum robots", available on [arXiv](https://arxiv.org/abs/2405.15336), on the shape estimation of continuum robots (CR), more precisely concentric tube continuum robots we plan on using for minimally invasive neurosurgery procedures. The reconstruction of CRs involves finding the backbone -- the central line -- of the robot.
 
 Here, we aim to provide tools and methods for reproducing the results from our work and to enable other's to find their robot's shape. This package is built up in an object-oriented manner, so that user's can easily implement compatible sub-modules, backbone models and algorithms
 
@@ -17,15 +17,15 @@ This package requires you to provide the parameters of a camera-calibration, in 
 - R: The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
 - T: The translation vector (3x1) describing the position of the first camera in world coordinates.
 
-We chose this 
+We chose these formulations to be in line with the camera calibration implementation of [OpenCV](https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html) for stereo calibration. A tutorial can also the found [there](https://docs.opencv.org/4.x/dc/dbb/tutorial_py_calibration.html).
 
 ## Documentation
 
-For in-depth information about the mathematical models, algorithms, and APIs used in CTCR reconstruction, refer to our [Github Wiki](https://github.com/MKHoffmann/icpReconstructor/wiki) and our work.
+For in-depth information about the algorithms and APIs used in CTCR reconstruction, refer to our [Github Wiki](https://github.com/MKHoffmann/icpReconstructor/wiki) and our work.
 
 ## Examples
 
-Within this repository, we provide a set of examples on one set of binary images of a simulated concentric tube continuum robot. These include the One-Step and Multi-Step algorithms, presented in our work, but also different ways of warmstarting using image-processing algorithms and space-carving.
+Within this repository, we provide a set of examples on one set of binary images of a simulated concentric tube continuum robot. These include the One-Step and Multi-Step algorithms presented in our work, but also different ways of warmstarting using image-processing algorithms and space-carving.
 
 ## How to Cite
 
