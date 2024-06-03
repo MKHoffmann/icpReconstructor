@@ -8,6 +8,23 @@ This project arose from our work "An iterative closest point algorithm for marke
 
 Here, we aim to provide tools and methods for reproducing the results from our work and to enable other's to find their robot's shape. This package is built up in an object-oriented manner, so that user's can easily implement compatible sub-modules, backbone models and algorithms
 
+## Installation
+This package is available via PyPI:
+```
+pip install icpReconstructor
+```
+It requires the following packages:
+- PyTorch
+- CasADi
+- NumPy
+- torchdiffeq     
+- scikit-learn
+- scikit-image
+- tqdm
+- NetworkX
+- SciPy
+
+
 ## Prerequisites
 
 This package requires you to provide the parameters of a camera-calibration, in particular the following:

@@ -28,7 +28,9 @@ setup(
         'torch >= 2.0.0',      
         'scikit-learn >= 1.2.0',
         'scikit-image >= 0.20.0',
-        'tqdm >= 4.64.1'
+        'tqdm >= 4.64.1',
+        'networkx >= 3.1',
+        'scipy >= 1.11.0' 
     ],
     extras_require={
         'dev': ['check-manifest'],
