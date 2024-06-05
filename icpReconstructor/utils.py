@@ -16,7 +16,7 @@ def image_to_idx( img ):
     return np.stack(im_idc, 1)
 
 
-def camera_folder_to_params( camera_folder, cams, package="torch" ):
+def camera_folder_to_params( camera_folder, cams, package="torch", device=torch.device('cpu') ):
     """
         Read the parameters from a folder using predefined file names.
 
@@ -32,14 +32,14 @@ def camera_folder_to_params( camera_folder, cams, package="torch" ):
 
     param_list = []
     path = camera_folder if camera_folder[-1] == sep else camera_folder + sep
-    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float(), "casadi":lambda x: np.load(path + x)}[package]
+    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float().to(device), "casadi":lambda x: np.load(path + x)}[package]
     for i in i_cams:
         param_list.append({
             "A": load_and_tensor(f"calib_A{i}.npy"),
             "dist": load_and_tensor(f"calib_dist{i}.npy"),
             "P": load_and_tensor(f"calib_P{i}_.npy"),
-            "R": load_and_tensor("cs_conversion_R.npy"),
-            "T": load_and_tensor("cs_conversion_T.npy")})
+            "R_cam0_world": load_and_tensor("cs_conversion_R.npy"),
+            "T_cam0_world": load_and_tensor("cs_conversion_T.npy")})
     return param_list
 
 
@@ -61,7 +61,7 @@ class PixelDataset(Dataset):
                 Tensor containing the index of the corresponding camera.
     """
 
-    def __init__( self, p_list ):
+    def __init__( self, p_list, device=torch.device('cpu') ):
         self.p = None
         self.img_idx_data = None
         for i in range(len(p_list)):
@@ -119,8 +119,8 @@ def ball_tree_norm(A, B, p):
     """
 
     # Convert tensors to numpy arrays
-    A_np = A.detach().numpy()
-    B_np = B.detach().numpy()
+    A_np = A.cpu().detach().numpy()
+    B_np = B.cpu().detach().numpy()
     # Create Ball Tree and query with A
     tree = BallTree(B_np, metric='minkowski', p=p)
     _, ind = tree.query(A_np, k=1)
@@ -367,7 +367,7 @@ def getMethod(method):
     return butcher
 
 
-def fromWorld2Img(pos, A, dist, P, R, T):
+def fromWorld2Img(pos, A, dist, P, R_cam0_world, T_cam0_world):
     
     r"""
         Transforms 3D world coordinates into 2D pixel coordinates on an image plane using camera calibration parameters. This function
@@ -396,10 +396,10 @@ def fromWorld2Img(pos, A, dist, P, R, T):
         P : torch.Tensor
             The projection matrix (3x4) used to project 3D camera coordinates onto the image plane.
     
-        R : torch.Tensor
+        R_cam0_world : torch.Tensor
             The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
-        T : torch.Tensor
+        T_cam0_world : torch.Tensor
             The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
@@ -428,7 +428,7 @@ def fromWorld2Img(pos, A, dist, P, R, T):
     R_t = torch.linalg.solve(A, P).float()
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = R.T@(pos-T.reshape(3,1))
+    pos_camera = R_cam0_world.T@(pos-T_cam0_world.reshape(3,1))
     pos_camera_h = torch.concat((pos_camera, torch.ones((1, pos_camera.shape[1]))), 0)
     
     # Calculate normalized camera coordinates in Camera
@@ -453,7 +453,7 @@ def fromWorld2Img(pos, A, dist, P, R, T):
     return pixel
 
 
-def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
+def fromWorld2ImgCasadi(pos, A, dist, P, R_cam0_world, T_cam0_world):
     r"""
         Transforms 3D world coordinates into 2D pixel coordinates using camera calibration parameters and the CasADi library for
         numerical computations. This function is designed for applications in optimization and control where gradient computations are
@@ -481,10 +481,10 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
         P : numpy.ndarray
             The projection matrix (3x3) used to project 3D camera coordinates onto the image plane. This is a static matrix.
     
-        R : numpy.ndarray
+        R_cam0_world : numpy.ndarray
             The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
-        T : numpy.ndarray
+        T_cam0_world : numpy.ndarray
             The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
@@ -511,7 +511,7 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
     R_t = np.linalg.solve(A, P)
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = R.T@(pos-T.reshape(3,1))
+    pos_camera = R_cam0_world.T@(pos-T_cam0_world.reshape(3,1))
 
     pos_camera_h = casadi.vertcat(pos_camera, casadi.MX.ones(1, pos_camera.shape[1]))
     
@@ -687,6 +687,34 @@ def spaceCarvingReconstruction(images, cam_params, p0=np.zeros((3,)), x_bounds=[
     
     return path, pts_3d
     
+
+def generate_circle(n: int) -> np.ndarray:
+    """
+    Generate n points lying on the unit circle.
+
+    Arguments
+    ----------
+        n (int): The number of points to generate.
+
+    Returns
+    -------
+    numpy.array
+        An n x 2 matrix where each row is a pair (cx, cy) lying on the unit circle.
+    """
+    
+    # Generate n angles evenly spaced between 0 and 2pi
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+
+    # Compute cx and cy for each angle
+    cx = np.cos(angles)
+    cy = np.sin(angles)
+
+    # Combine cx and cy into a single matrix
+    c_val = np.vstack((cx, cy)).T
+
+    return c_val
+
+
 """
     Alle Hilfsfunktionen
 """

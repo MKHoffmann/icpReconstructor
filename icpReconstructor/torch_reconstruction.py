@@ -221,7 +221,7 @@ class TorchPolynomialCurve(nn.Module):
     """
     
     def __init__(
-            self, l, p0=torch.zeros(3, 1), p0_parametric=False, 
+            self, l, p0=None, p0_parametric=False, 
             ux=None, uy=None, uz=None, optimize=[True, True, True], continuous_u=[True, True, True], 
             random_init=[False] * 3 
             ):
@@ -232,6 +232,9 @@ class TorchPolynomialCurve(nn.Module):
         self.l = l
         self.n = len(l)
         
+        if p0 is None:
+            p0 = torch.zeros(3, 1)
+
         if p0_parametric:
             self.p0 = nn.Parameter(p0)
         else:
@@ -358,7 +361,7 @@ class TorchMovingFrame(nn.Module):
     """
 
     def __init__(
-            self, l, p0=torch.zeros(3, 1), p0_parametric=False, R0=None, R0_parametric=False, rotation_method="rotm", 
+            self, l, p0=None, p0_parametric=False, R0=None, R0_parametric=False, rotation_method="rotm", 
             ux=None, uy=None, uz=None, optimize=[True, True, False], integrator='midpoint', continuous_u=[False, False, True], 
             random_init=[False] * 3 
             ):
@@ -371,6 +374,9 @@ class TorchMovingFrame(nn.Module):
 
         self.l = l
         self.n = len(l)
+
+        if p0 is None:
+            p0 = torch.zeros(3, 1)
 
         if p0_parametric:
             self.p0 = nn.Parameter(p0)
@@ -727,6 +733,8 @@ class TorchCurveEstimator():
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
+        self.__bb_pixel_coordinates = None
+
         loss = 0
         if self.w < 1.:
             loss += self.pixel_loss(img_coordinates, img_idx_data) * (1 - self.w)
@@ -831,7 +839,7 @@ class TorchCurveEstimator():
             if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
                 break
             with torch.no_grad():
-                loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
+                loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
             if loss_hist[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]

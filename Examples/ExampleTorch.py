@@ -29,11 +29,11 @@ dist1 = cam_params[1]["dist"]
 P0 = cam_params[0]["P"]
 P1 = cam_params[1]["P"]
 
-R = cam_params[0]["R"]
-T = cam_params[0]["T"]
+R = cam_params[0]["R_cam0_world"]
+T = cam_params[0]["T_cam0_world"]
 
-plot_curvature = True
-n_iter = 1
+plot_curvature = False
+n_iter = 8
 
 #%% Image data
 """
