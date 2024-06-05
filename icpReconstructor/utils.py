@@ -69,6 +69,8 @@ class PixelDataset(Dataset):
             self.p = p if self.p is None else np.concatenate((self.p, p), 0)
             self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
                 (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
+            # self.p = torch.from_numpy(self.p).to(device)
+            # self.img_idx_data = torch.from_numpy(self.img_idx_data).to(device)
 
     def __len__( self ):
         return self.p.shape[0]

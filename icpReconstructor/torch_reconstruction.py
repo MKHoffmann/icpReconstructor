@@ -631,7 +631,7 @@ class TorchCurveEstimator():
         if self.pixel_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in np.unique(np.unique(img_idx_data)):
+            for i in torch.unique(torch.unique(img_idx_data)):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
                 idc_min = ball_tree_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
@@ -656,7 +656,7 @@ class TorchCurveEstimator():
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
         idx_min_dist, cr_img_coordinates_sorted = self.get_pixel_diff_idx(cr_img_coordinates, img_idx_data)
-        for i in np.unique(img_idx_data):
+        for i in torch.unique(img_idx_data):
             diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i] if diffs is None else torch.concatenate(
                 (diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i]), 0)
         return diffs
@@ -685,7 +685,7 @@ class TorchCurveEstimator():
         if self.backbone_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in np.unique(np.unique(img_idx_data)):
+            for i in torch.unique(torch.unique(img_idx_data)):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
                 idc_min = ball_tree_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
@@ -709,7 +709,7 @@ class TorchCurveEstimator():
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
         idx_min_dist, cr_img_coordinates_sorted = self.get_backbone_diff_idx(cr_img_coordinates, img_idx_data)
-        for i in np.unique(img_idx_data):
+        for i in torch.unique(img_idx_data):
             diffs = curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else torch.concatenate(
                 (diffs, curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :]), 0)
         return diffs
@@ -805,36 +805,54 @@ class TorchCurveEstimator():
 
         if batch_size is None:
             batch_size = int(len(dataset))
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, persistent_workers=False)
+        # dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, persistent_workers=False)
         
+        number_of_datapoints = len(dataset)
+        if batch_size is None or batch_size > number_of_datapoints:
+            batch_size = number_of_datapoints
+        if batch_size > number_of_datapoints:
+            batch_size = number_of_datapoints
+
         with torch.no_grad():
-            loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
+            loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
             lowest_loss = loss_hist[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
         for i in range(1, n_iter + 1):
-            with tqdm(enumerate(dataloader)) as pbar:
-                for j, (smpl, idc) in pbar:
-                    if smpl.shape[0] < batch_size:
-                        continue
-                    for k in range(repetitions):
-                        optimizer.zero_grad()
-                        self.__bb_pixel_coordinates = None
-                        loss = self.loss(smpl, idc)
-                        loss.backward()
-                        pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                        pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
-                        optimizer.step()
-                        if use_scheduler:
-                            scheduler.step(loss)
-                        self.curve_model.set_funs()
-                        for f in self.post_step_cb:
-                            f(self)
-                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                            break
-                    self.reset_diff_states()
-                    for f in self.post_epoch_cb:
+            perm = torch.randperm(number_of_datapoints, device="cpu")
+
+            image_coordinates = (dataset.p[perm])
+            image_index_data = (dataset.img_idx_data[perm])
+            for j in range(number_of_datapoints // batch_size):
+                batch_image_coordinates = \
+                    image_coordinates[j * batch_size : (j + 1) * batch_size]
+                batch_image_index_data = \
+                    image_index_data[j * batch_size : (j + 1) * batch_size]
+                # if smpl.shape[0] < batch_size:
+                #     continue
+                for k in range(repetitions):
+                    optimizer.zero_grad()
+                    self.__bb_pixel_coordinates = None
+                    loss = self.loss(torch.from_numpy(batch_image_coordinates), torch.from_numpy(batch_image_index_data))
+                    loss.backward()
+                    print(
+                        f"Epoch {i}/{n_iter} | "
+                        f"Iteration {j + 1} | "
+                        f"Repetition {k + 1} | "
+                        f"Loss = {loss.item():.3f} ")
+                    # pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
+                    # pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
+                    optimizer.step()
+                    if use_scheduler:
+                        scheduler.step(loss)
+                    self.curve_model.set_funs()
+                    for f in self.post_step_cb:
                         f(self)
+                    if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
+                        break
+                self.reset_diff_states()
+                for f in self.post_epoch_cb:
+                    f(self)
             
             if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
                 break
