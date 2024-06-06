@@ -6,11 +6,10 @@ The package needs a PyTorch build with LAPACK/BLAS, the easiest way for getting 
 
 import torch
 import torch.nn as nn
-import numpy as np
 from .utils import fromWorld2Img, ball_tree_norm, PixelDataset
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint as odeint
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
@@ -805,13 +804,10 @@ class TorchCurveEstimator():
 
         if batch_size is None:
             batch_size = int(len(dataset))
-        # dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, persistent_workers=False)
         
-        number_of_datapoints = len(dataset)
-        if batch_size is None or batch_size > number_of_datapoints:
-            batch_size = number_of_datapoints
-        if batch_size > number_of_datapoints:
-            batch_size = number_of_datapoints
+        rndsampler = RandomSampler(dataset)
+        batchsampler = BatchSampler(rndsampler, batch_size=batch_size, drop_last=True)
+        dataloader = DataLoader(dataset, sampler=batchsampler)
 
         with torch.no_grad():
             loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
@@ -819,43 +815,31 @@ class TorchCurveEstimator():
             best_model = deepcopy(self.curve_model.state_dict())
         
         for i in range(1, n_iter + 1):
-            perm = torch.randperm(number_of_datapoints, device="cpu")
-
-            image_coordinates = (dataset.p[perm])
-            image_index_data = (dataset.img_idx_data[perm])
-            for j in range(number_of_datapoints // batch_size):
-                batch_image_coordinates = \
-                    image_coordinates[j * batch_size : (j + 1) * batch_size]
-                batch_image_index_data = \
-                    image_index_data[j * batch_size : (j + 1) * batch_size]
-                # if smpl.shape[0] < batch_size:
-                #     continue
-                for k in range(repetitions):
-                    optimizer.zero_grad()
-                    self.__bb_pixel_coordinates = None
-                    loss = self.loss(torch.from_numpy(batch_image_coordinates), torch.from_numpy(batch_image_index_data))
-                    loss.backward()
-                    print(
-                        f"Epoch {i}/{n_iter} | "
-                        f"Iteration {j + 1} | "
-                        f"Repetition {k + 1} | "
-                        f"Loss = {loss.item():.3f} ")
-                    # pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                    # pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
-                    optimizer.step()
-                    if use_scheduler:
-                        scheduler.step(loss)
-                    self.curve_model.set_funs()
-                    for f in self.post_step_cb:
-                        f(self)
-                    if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                        break
-                self.reset_diff_states()
-                for f in self.post_epoch_cb:
-                    f(self)
+            with tqdm(enumerate(dataloader)) as pbar:
+                for j, (smpl, idc) in pbar:
+                    smpl = smpl.squeeze()
+                    idc = idc.squeeze()
+                    if smpl.shape[0] < batch_size:
+                        continue
+                    for k in range(repetitions):
+                        optimizer.zero_grad()
+                        self.__bb_pixel_coordinates = None
+                        loss = self.loss(smpl, idc)
+                        loss.backward()
+                        pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
+                        pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
+                        optimizer.step()
+                        if use_scheduler:
+                            scheduler.step(loss)
+                        self.curve_model.set_funs()
+                        for f in self.post_step_cb:
+                            f(self)
+                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
+                            break
+                    self.reset_diff_states()
+            for f in self.post_epoch_cb:
+                f(self)
             
-            if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                break
             with torch.no_grad():
                 loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
             if loss_hist[-1] < lowest_loss:
