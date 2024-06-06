@@ -5,6 +5,8 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
+from pathlib import Path
+
 from icpReconstructor.torch_reconstruction import TorchMovingFrame, PixelDataset
 from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
 from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params, PixelDataset
@@ -21,7 +23,7 @@ l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the reconstruction segme
 """
 Load camera calibration files and simulate one set of cannulas.
 """
-camera_folder = "camera_calibration_files"
+camera_folder = Path.cwd() / "camera_calibration_files"
 
 cam_params = camera_folder_to_params(camera_folder, 2)
 cam_params_cas = camera_folder_to_params(camera_folder, 2, package="casadi")
@@ -44,8 +46,8 @@ dataset = PixelDataset([p0_img, p1_img], use_numpy=True)
 #%% epipolar line matching
 now = time()
 
-tip_estimator_params_0 = camera_folder + "param_cam_0.mat"
-tip_estimator_params_1 = camera_folder + "param_cam_1.mat"
+tip_estimator_params_0 = camera_folder / "param_cam_0.mat"
+tip_estimator_params_1 = camera_folder / "param_cam_1.mat"
 
 bin_threshold = 200
 
