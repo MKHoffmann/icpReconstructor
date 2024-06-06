@@ -630,7 +630,7 @@ class TorchCurveEstimator():
         if self.pixel_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in torch.unique(torch.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
                 idc_min = ball_tree_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
@@ -684,7 +684,7 @@ class TorchCurveEstimator():
         if self.backbone_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in torch.unique(torch.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
                 idc_min = ball_tree_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
