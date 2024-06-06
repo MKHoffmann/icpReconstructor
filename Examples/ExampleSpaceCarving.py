@@ -21,7 +21,7 @@ Load camera calibration files and simulate one set of cannulas.
 """
 camera_folder = Path.cwd() / "camera_calibration_files"
 
-cam_params = camera_folder_to_params(camera_folder, 2)
+cam_params = camera_folder_to_params(camera_folder, 2, package="casadi")
 
 #%% Image data
 """
@@ -44,14 +44,14 @@ z_bounds = [0, 0.16]
 
 path, pts_3d = spaceCarvingReconstruction(images, cam_params, x_bounds=x_bounds, y_bounds=y_bounds, z_bounds=z_bounds)
 
-path_plot = path.detach().numpy()
+path_plot = path.copy()
 s_path = np.zeros(path.shape[0])
 for i in range(1, path.shape[0]):
     s_path[i] = s_path[i-1] + np.linalg.norm((path[i]-path[i-1]), 2)
     
 print(f"The space carving took {time()-start} s.")
 #%%
-pts_3d_plot = pts_3d.detach().numpy()
+pts_3d_plot = pts_3d.copy()
 fig = plt.figure()
 ax1 = fig.add_subplot(projection="3d")
 ax1.plot(pts_3d_plot[:, 0], pts_3d_plot[:, 1], pts_3d_plot[:, 2], '.', linewidth=1, label='Space Carving')
@@ -66,3 +66,6 @@ fig = plt.figure()
 ax = fig.add_subplot(projection="3d")
 ax.plot(path_plot[:,0],path_plot[:,1],path_plot[:,2])
 ax.axis('equal')
+
+plt.show()
+# %%
