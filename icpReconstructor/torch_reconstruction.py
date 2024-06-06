@@ -587,7 +587,7 @@ class TorchCurveEstimator():
         self.dist_norm = dist_norm
         self.pixel_diff_state = None
         self.backbone_diff_state = None
-        self.__bb_pixel_coordinates = None
+        self._bb_pixel_coordinates = None
         if len(camera_calibration_parameters) < 2:
             warn("Two or more images are necessary for a successful reconstruction.")
         self.camera_calibration_parameters = camera_calibration_parameters
@@ -600,12 +600,12 @@ class TorchCurveEstimator():
         """
             Project the computed backbone points to all the images and return the image coordinates.
         """
-        if self.__bb_pixel_coordinates is None:
+        if self._bb_pixel_coordinates is None:
             backbone_pts = self.curve_model(self.s_val).T
-            self.__bb_pixel_coordinates = []
+            self._bb_pixel_coordinates = []
             for i in range(len(self.camera_calibration_parameters)):
-                self.__bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
-        return self.__bb_pixel_coordinates
+                self._bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
+        return self._bb_pixel_coordinates
 
     def reset_diff_states( self ):
         """
@@ -630,7 +630,7 @@ class TorchCurveEstimator():
         if self.pixel_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in torch.unique(torch.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
                 idc_min = ball_tree_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
@@ -684,7 +684,7 @@ class TorchCurveEstimator():
         if self.backbone_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in torch.unique(torch.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
                 idc_min = ball_tree_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
@@ -732,7 +732,7 @@ class TorchCurveEstimator():
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
-        self.__bb_pixel_coordinates = None
+        self._bb_pixel_coordinates = None
 
         loss = 0
         if self.w < 1.:
@@ -810,7 +810,7 @@ class TorchCurveEstimator():
         dataloader = DataLoader(dataset, sampler=batchsampler)
 
         with torch.no_grad():
-            loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
+            loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             lowest_loss = loss_hist[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
@@ -823,14 +823,13 @@ class TorchCurveEstimator():
                         continue
                     for repetition in range(repetitions):
                         optimizer.zero_grad()
-                        self.__bb_pixel_coordinates = None
+                        self._bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
                         pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
                         pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
-                        if use_scheduler:
-                            scheduler.step(loss)
+                        
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
@@ -839,9 +838,10 @@ class TorchCurveEstimator():
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
                 f(self)
-            
+            if use_scheduler:
+                scheduler.step()
             with torch.no_grad():
-                loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
+                loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             if loss_hist[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]
