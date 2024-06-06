@@ -4,6 +4,8 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
+from pathlib import Path
+
 from icpReconstructor.torch_reconstruction import PixelDataset
 from icpReconstructor.utils import spaceCarvingReconstruction, find_longest_path, image_to_idx, camera_folder_to_params
 import torch
@@ -17,7 +19,7 @@ l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the segments
 """
 Load camera calibration files and simulate one set of cannulas.
 """
-camera_folder = "camera_calibration_files"
+camera_folder = Path.cwd() / "camera_calibration_files"
 
 cam_params = camera_folder_to_params(camera_folder, 2)
 

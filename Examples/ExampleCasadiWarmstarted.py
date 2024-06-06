@@ -2,6 +2,8 @@ import sys
 
 sys.path.append("..")
 
+from pathlib import Path
+
 from icpReconstructor.torch_reconstruction import TorchMovingFrame
 from icpReconstructor.epipolar_reconstruction import EpipolarReconstructor
 from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
@@ -18,10 +20,10 @@ l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the segments
 """
 Load camera calibration files and simulate one set of cannulas.
 """
-camera_folder = "camera_calibration_files"
+camera_folder = Path.cwd() / "camera_calibration_files"
 
-cam_params = camera_folder_to_params(camera_folder, 2)
-cam_params_cas = camera_folder_to_params(camera_folder, 2, package="casadi")
+cam_params = camera_folder_to_params(str(camera_folder), 2)
+cam_params_cas = camera_folder_to_params(str(camera_folder), 2, package="casadi")
 
 A0 = cam_params[0]["A"]
 A1 = cam_params[1]["A"]
@@ -30,8 +32,8 @@ dist1 = cam_params[1]["dist"]
 P0 = cam_params[0]["P"]
 P1 = cam_params[1]["P"]
 
-R = cam_params[0]["R"]
-T = cam_params[0]["T"]
+R_cam0_world = cam_params[0]["R_cam0_world"]
+T_cam0_world = cam_params[0]["T_cam0_world"]
 
 plot_curvature = True
 n_iter = 1
@@ -51,12 +53,25 @@ dataset = PixelDataset([p0_img, p1_img])
 #%% epipolar line matching
 now = time()
 
-tip_estimator_params_0 = camera_folder + "\\param_cam_0.mat"
-tip_estimator_params_1 = camera_folder + "\\param_cam_1.mat"
+tip_estimator_params_0 = camera_folder / "param_cam_0.mat"
+tip_estimator_params_1 = camera_folder / "param_cam_1.mat"
 
 bin_threshold = 200
 
-reconstructor = EpipolarReconstructor(np.uint8((1-im0_bin[:,:,None])*255*np.ones((1,1,3))), np.uint8((1-im1_bin[:,:,None])*255*np.ones((1,1,3))), A0.detach().numpy(), A1.detach().numpy(), dist0.detach().numpy(), dist1.detach().numpy(), P0.detach().numpy(), P1.detach().numpy(), R.detach().numpy(), T.detach().numpy(), bin_threshold, tip_estimator_params_0, tip_estimator_params_1)
+reconstructor = EpipolarReconstructor(
+    np.uint8((1-im0_bin[:,:,None])*255*np.ones((1,1,3))),
+    np.uint8((1-im1_bin[:,:,None])*255*np.ones((1,1,3))), 
+    A0.detach().numpy(), 
+    A1.detach().numpy(), 
+    dist0.detach().numpy(), 
+    dist1.detach().numpy(),
+    P0.detach().numpy(), 
+    P1.detach().numpy(), 
+    R_cam0_world.detach().numpy(), 
+    T_cam0_world.detach().numpy(), 
+    bin_threshold, 
+    str(tip_estimator_params_0), 
+    str(tip_estimator_params_1))
 
 Data_cam_0, Data_cam_1, _, _ = reconstructor.get_2D(plot=False)
 Data_3d = reconstructor.get_3D(data_cam_0 = Data_cam_0, data_cam_1 = Data_cam_1, interval = 20, plot=False) #x, y, z, s
@@ -124,8 +139,8 @@ s = torch.linspace(0, l[-1], 1000)
 p_out = curvature.integrate(s).detach().numpy()
 
 #%%
-p_img0 = fromWorld2Img(torch.from_numpy(p_out[:, :3].T), A0, dist0, P0, R, T).detach().numpy()
-p_img1 = fromWorld2Img(torch.from_numpy(p_out[:, :3].T), A1, dist1, P1, R, T).detach().numpy()
+p_img0 = fromWorld2Img(torch.from_numpy(p_out[:, :3].T), A0, dist0, P0, R_cam0_world, T_cam0_world).detach().numpy()
+p_img1 = fromWorld2Img(torch.from_numpy(p_out[:, :3].T), A1, dist1, P1, R_cam0_world, T_cam0_world).detach().numpy()
 
 fig = plt.figure()
 ax1 = fig.add_subplot(2, 2, 1, projection="3d")
