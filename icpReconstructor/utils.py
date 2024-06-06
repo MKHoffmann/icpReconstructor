@@ -1,3 +1,4 @@
+from pathlib import Path
 import casadi
 import numpy as np
 import torch
@@ -22,12 +23,16 @@ def camera_folder_to_params( camera_folder, cams, package="torch", device=torch.
 
         Arguments
         ----------
-        camera_folder : str
+        camera_folder : str | Path
             Folder containing the parameter files.
 
         cams : int or list
             Either the number of cameras to be used or a list of camera indices.
     """
+    # If the camera_folder is a Path convert it to string first
+    if isinstance(camera_folder, Path):
+        camera_folder = str(camera_folder)
+
     i_cams = cams if type(cams) is list else list(range(cams))
 
     param_list = []
