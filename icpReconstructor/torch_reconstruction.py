@@ -810,7 +810,7 @@ class TorchCurveEstimator():
         dataloader = DataLoader(dataset, sampler=batchsampler)
 
         with torch.no_grad():
-            loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
+            loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             lowest_loss = loss_hist[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
@@ -829,8 +829,7 @@ class TorchCurveEstimator():
                         pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
                         pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
-                        if use_scheduler:
-                            scheduler.step(loss)
+                        
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
@@ -839,9 +838,10 @@ class TorchCurveEstimator():
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
                 f(self)
-            
+            if use_scheduler:
+                scheduler.step()
             with torch.no_grad():
-                loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().cpu().numpy())
+                loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             if loss_hist[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]

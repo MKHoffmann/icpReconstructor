@@ -9,9 +9,11 @@ from icpReconstructor.torch_reconstruction import TorchMovingFrame, PixelDataset
 from icpReconstructor.casadi_reconstruction import CasadiCurveEstimator, Polynomial3Casadi, CasadiMovingFrame
 from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params, PixelDataset
 import torch
+from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 import matplotlib.pyplot as plt
 from time import time
 from random import sample
+from tqdm import tqdm
 
 #%% Initialization
 l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the reconstruction segments
@@ -25,7 +27,7 @@ cam_params = camera_folder_to_params(camera_folder, 2)
 cam_params_cas = camera_folder_to_params(camera_folder, 2, package="casadi")
 
 plot_curvature = True
-n_iter = 8
+n_iter = 2
 
 #%% Image data
 """
@@ -37,7 +39,7 @@ im1_bin = plt.imread("im1.png") > 0
 p0_img = image_to_idx(im0_bin)
 p1_img = image_to_idx(im1_bin)
 
-dataset = PixelDataset([p0_img, p1_img])
+dataset = PixelDataset([p0_img, p1_img], use_numpy=True)
 
 #%% epipolar line matching
 now = time()
@@ -62,18 +64,32 @@ model.uy = uy
 model.add_u_constraint("x", -40, 40)
 model.add_u_constraint("y", -40, 40)
 
-cce = CasadiCurveEstimator(model, cam_params_cas, l[-1].detach().numpy(), dist_norm=2)
+cce = CasadiCurveEstimator(model, cam_params_cas, l[-1].detach().numpy(), dist_norm=8)
 
 cce.initial_solve()
 
-frac = 2
+frac = 10
+batch_size = len(dataset) // frac
+
+rndsampler = RandomSampler(dataset)
+batchsampler = BatchSampler(rndsampler, batch_size=batch_size, drop_last=True)
+dataloader = DataLoader(dataset, sampler=batchsampler)
+
 loss_hist = []
-dataset_idc = sample(range(len(dataset)), int(len(dataset)/frac))
-for j in range(n_iter):
-    
-    cce._set_warmstart_ipopt(1e-6)
-    cost = cce.icp_step(dataset.p[dataset_idc,:], dataset.img_idx_data[dataset_idc])
-    loss_hist.append(cost)
+for epoch in range(1, n_iter + 1):
+    with tqdm(enumerate(dataloader)) as pbar:
+        for iter, (smpl, idc) in pbar:
+            smpl = smpl.squeeze().numpy()
+            idc = idc.squeeze().numpy()
+            cce._set_warmstart_ipopt(1e-6)
+            cost = cce.icp_step(smpl, idc)
+            loss_hist.append(cost)
+            pbar.set_postfix(loss=loss_hist[-1])
+            pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}")
+                        
+cce._set_warmstart_ipopt(1e-6)
+cost = cce.icp_step(dataset.p, dataset.img_idx_data)
+loss_hist.append(cost)
 
 print(f"The algorithm ran for {time() - start} s.")
 
@@ -114,3 +130,5 @@ ax4.imshow(im1_bin)
 ax4.title.set_text('Binary Image 1')
 ax4.plot(p_img1[0, :], p_img1[1, :], label="reconstruction")
 ax4.legend()
+
+plt.show()
