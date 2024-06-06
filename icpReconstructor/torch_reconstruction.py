@@ -587,7 +587,7 @@ class TorchCurveEstimator():
         self.dist_norm = dist_norm
         self.pixel_diff_state = None
         self.backbone_diff_state = None
-        self.__bb_pixel_coordinates = None
+        self._bb_pixel_coordinates = None
         if len(camera_calibration_parameters) < 2:
             warn("Two or more images are necessary for a successful reconstruction.")
         self.camera_calibration_parameters = camera_calibration_parameters
@@ -600,12 +600,12 @@ class TorchCurveEstimator():
         """
             Project the computed backbone points to all the images and return the image coordinates.
         """
-        if self.__bb_pixel_coordinates is None:
+        if self._bb_pixel_coordinates is None:
             backbone_pts = self.curve_model(self.s_val).T
-            self.__bb_pixel_coordinates = []
+            self._bb_pixel_coordinates = []
             for i in range(len(self.camera_calibration_parameters)):
-                self.__bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
-        return self.__bb_pixel_coordinates
+                self._bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
+        return self._bb_pixel_coordinates
 
     def reset_diff_states( self ):
         """
@@ -732,7 +732,7 @@ class TorchCurveEstimator():
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
-        self.__bb_pixel_coordinates = None
+        self._bb_pixel_coordinates = None
 
         loss = 0
         if self.w < 1.:
@@ -823,7 +823,7 @@ class TorchCurveEstimator():
                         continue
                     for repetition in range(repetitions):
                         optimizer.zero_grad()
-                        self.__bb_pixel_coordinates = None
+                        self._bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
                         pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
