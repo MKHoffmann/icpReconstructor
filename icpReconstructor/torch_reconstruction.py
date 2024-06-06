@@ -814,20 +814,20 @@ class TorchCurveEstimator():
             lowest_loss = loss_hist[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
-        for i in range(1, n_iter + 1):
+        for epoch in range(1, n_iter + 1):
             with tqdm(enumerate(dataloader)) as pbar:
-                for j, (smpl, idc) in pbar:
+                for iter, (smpl, idc) in pbar:
                     smpl = smpl.squeeze()
                     idc = idc.squeeze()
                     if smpl.shape[0] < batch_size:
                         continue
-                    for k in range(repetitions):
+                    for repetition in range(repetitions):
                         optimizer.zero_grad()
                         self.__bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
                         pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                        pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
+                        pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
                         if use_scheduler:
                             scheduler.step(loss)
