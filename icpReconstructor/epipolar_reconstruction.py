@@ -73,7 +73,7 @@ class EpipolarReconstructor:
         ret = np.dot(np.linalg.inv(K2).T, np.dot(R, np.dot(K1.T, C)))
         return ret
         
-    def get_2D (self, plot = False):
+    def get_2D (self, plot = False, real_image = False):
         
         r"""
            Obtain the skeletons of images from camera 1 and camera 2, and arrange the pixel coordinates of the skeletons in the order of the path from the starting point.
@@ -82,7 +82,11 @@ class EpipolarReconstructor:
            ----------
            plot : boolean
                If True, images in camera 0 and camera 1 are displayed.
-           
+               
+           real_image : boolean
+               If True, the image is a real photograph; 
+               If False, the image is a picture from simulated data. Thenm no trimming of image is necessary.
+              
            data_cam_0, data_cam_1 : array in size (n,2), n is the number of pixels in the skeletons of images from camera 0 and camera 1.
                The first two elements of the return value of the 'get_2D' function.
                The 2D coordinates of each point in the skeletons of images from camera 0 and camera 1 are arranged in the order of the path from the starting point.           
@@ -103,6 +107,15 @@ class EpipolarReconstructor:
         param_dict = loadmat(self.tip_estimator_params_0)
         p_start = param_dict["p_start"]
         exit_dir = param_dict["exit_dir"]
+        blank_idc = param_dict["blank_idc"]
+        
+        if (real_image):
+           # Trim the rack and frame from the image
+           img[blank_idc[:,1], blank_idc[:,0]] = 255
+           img[0:50,:] = 255
+           img[:,0:50] = 255
+           img[-50:,:] = 255
+           img[:,-50:] = 255 
         
         # filter noise
         se = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
@@ -153,6 +166,14 @@ class EpipolarReconstructor:
         p_start = param_dict["p_start"]
         exit_dir = param_dict["exit_dir"]
         blank_idc = param_dict["blank_idc"]
+        
+        if (real_image):
+           # Trim the rack and frame from the image
+           img[blank_idc[:,1], blank_idc[:,0]] = 255
+           img[0:50,:] = 255
+           img[:,0:50] = 255
+           img[-50:,:] = 255
+           img[:,-50:] = 255   
         
         # filter noise
         se = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
