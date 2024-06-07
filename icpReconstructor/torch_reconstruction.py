@@ -6,11 +6,10 @@ The package needs a PyTorch build with LAPACK/BLAS, the easiest way for getting 
 
 import torch
 import torch.nn as nn
-import numpy as np
 from .utils import fromWorld2Img, ball_tree_norm, PixelDataset
 from abc import ABC, abstractmethod
 from torchdiffeq import odeint as odeint
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
@@ -221,7 +220,7 @@ class TorchPolynomialCurve(nn.Module):
     """
     
     def __init__(
-            self, l, p0=torch.zeros(3, 1), p0_parametric=False, 
+            self, l, p0=None, p0_parametric=False, 
             ux=None, uy=None, uz=None, optimize=[True, True, True], continuous_u=[True, True, True], 
             random_init=[False] * 3 
             ):
@@ -232,6 +231,9 @@ class TorchPolynomialCurve(nn.Module):
         self.l = l
         self.n = len(l)
         
+        if p0 is None:
+            p0 = torch.zeros(3, 1)
+
         if p0_parametric:
             self.p0 = nn.Parameter(p0)
         else:
@@ -358,7 +360,7 @@ class TorchMovingFrame(nn.Module):
     """
 
     def __init__(
-            self, l, p0=torch.zeros(3, 1), p0_parametric=False, R0=None, R0_parametric=False, rotation_method="rotm", 
+            self, l, p0=None, p0_parametric=False, R0=None, R0_parametric=False, rotation_method="rotm", 
             ux=None, uy=None, uz=None, optimize=[True, True, False], integrator='midpoint', continuous_u=[False, False, True], 
             random_init=[False] * 3 
             ):
@@ -371,6 +373,9 @@ class TorchMovingFrame(nn.Module):
 
         self.l = l
         self.n = len(l)
+
+        if p0 is None:
+            p0 = torch.zeros(3, 1)
 
         if p0_parametric:
             self.p0 = nn.Parameter(p0)
@@ -582,7 +587,7 @@ class TorchCurveEstimator():
         self.dist_norm = dist_norm
         self.pixel_diff_state = None
         self.backbone_diff_state = None
-        self.__bb_pixel_coordinates = None
+        self._bb_pixel_coordinates = None
         if len(camera_calibration_parameters) < 2:
             warn("Two or more images are necessary for a successful reconstruction.")
         self.camera_calibration_parameters = camera_calibration_parameters
@@ -595,12 +600,12 @@ class TorchCurveEstimator():
         """
             Project the computed backbone points to all the images and return the image coordinates.
         """
-        if self.__bb_pixel_coordinates is None:
+        if self._bb_pixel_coordinates is None:
             backbone_pts = self.curve_model(self.s_val).T
-            self.__bb_pixel_coordinates = []
+            self._bb_pixel_coordinates = []
             for i in range(len(self.camera_calibration_parameters)):
-                self.__bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
-        return self.__bb_pixel_coordinates
+                self._bb_pixel_coordinates.append(fromWorld2Img(backbone_pts, **self.camera_calibration_parameters[i]).T)
+        return self._bb_pixel_coordinates
 
     def reset_diff_states( self ):
         """
@@ -625,7 +630,7 @@ class TorchCurveEstimator():
         if self.pixel_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in np.unique(np.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
                 idc_min = ball_tree_norm(cr_img_coordinates_i.float(), backbone_img_coordinates[i], p=self.dist_norm)
@@ -650,7 +655,7 @@ class TorchCurveEstimator():
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
         idx_min_dist, cr_img_coordinates_sorted = self.get_pixel_diff_idx(cr_img_coordinates, img_idx_data)
-        for i in np.unique(img_idx_data):
+        for i in torch.unique(img_idx_data):
             diffs = curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i] if diffs is None else torch.concatenate(
                 (diffs, curve_pixel_coordinates[i][idx_min_dist[i], :] - cr_img_coordinates_sorted[i]), 0)
         return diffs
@@ -679,7 +684,7 @@ class TorchCurveEstimator():
         if self.backbone_diff_state is None:
             idx_min_dist = []
             cr_img_coordinates_sorted = []
-            for i in np.unique(np.unique(img_idx_data)):
+            for i in torch.unique(img_idx_data):
                 cr_img_coordinates_i = cr_img_coordinates[img_idx_data == i, :]
                 # _, idc_min = brute_force_distance_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
                 idc_min = ball_tree_norm(backbone_img_coordinates[i], cr_img_coordinates_i.float(), p=self.dist_norm)
@@ -703,7 +708,7 @@ class TorchCurveEstimator():
         curve_pixel_coordinates = self.get_img_coordinates()
         diffs = None
         idx_min_dist, cr_img_coordinates_sorted = self.get_backbone_diff_idx(cr_img_coordinates, img_idx_data)
-        for i in np.unique(img_idx_data):
+        for i in torch.unique(img_idx_data):
             diffs = curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :] if diffs is None else torch.concatenate(
                 (diffs, curve_pixel_coordinates[i] - cr_img_coordinates_sorted[i][idx_min_dist[i], :]), 0)
         return diffs
@@ -727,6 +732,8 @@ class TorchCurveEstimator():
             img_idx_data :m-by-1 tensor
                 Tensor containing the index of the image a point was taken from.
        """
+        self._bb_pixel_coordinates = None
+
         loss = 0
         if self.w < 1.:
             loss += self.pixel_loss(img_coordinates, img_idx_data) * (1 - self.w)
@@ -797,41 +804,44 @@ class TorchCurveEstimator():
 
         if batch_size is None:
             batch_size = int(len(dataset))
-        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0, persistent_workers=False)
         
+        rndsampler = RandomSampler(dataset)
+        batchsampler = BatchSampler(rndsampler, batch_size=batch_size, drop_last=True)
+        dataloader = DataLoader(dataset, sampler=batchsampler)
+
         with torch.no_grad():
-            loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
+            loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             lowest_loss = loss_hist[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
-        for i in range(1, n_iter + 1):
+        for epoch in range(1, n_iter + 1):
             with tqdm(enumerate(dataloader)) as pbar:
-                for j, (smpl, idc) in pbar:
+                for iter, (smpl, idc) in pbar:
+                    smpl = smpl.squeeze()
+                    idc = idc.squeeze()
                     if smpl.shape[0] < batch_size:
                         continue
-                    for k in range(repetitions):
+                    for repetition in range(repetitions):
                         optimizer.zero_grad()
-                        self.__bb_pixel_coordinates = None
+                        self._bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
                         pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                        pbar.set_description(f"Epoch {i}/{n_iter}, Iteration {j + 1}")
+                        pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
-                        if use_scheduler:
-                            scheduler.step(loss)
+                        
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
                         if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
                             break
                     self.reset_diff_states()
-                    for f in self.post_epoch_cb:
-                        f(self)
-            
-            if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                break
+            for f in self.post_epoch_cb:
+                f(self)
+            if use_scheduler:
+                scheduler.step()
             with torch.no_grad():
-                loss_hist.append(self.loss(torch.from_numpy(dataset.p), torch.from_numpy(dataset.img_idx_data)).detach().numpy())
+                loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
             if loss_hist[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]

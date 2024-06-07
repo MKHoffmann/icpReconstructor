@@ -1,3 +1,4 @@
+from pathlib import Path
 import casadi
 import numpy as np
 import torch
@@ -6,7 +7,8 @@ from copy import copy
 from sklearn.neighbors import BallTree
 from torch.utils.data import Dataset
 from os.path import sep
-from skimage.morphology import skeletonize_3d
+from numpy.matlib import repmat
+from skimage.morphology import skeletonize
 
 def image_to_idx( img ):
     """
@@ -16,30 +18,34 @@ def image_to_idx( img ):
     return np.stack(im_idc, 1)
 
 
-def camera_folder_to_params( camera_folder, cams, package="torch" ):
+def camera_folder_to_params( camera_folder, cams, package="torch", device=torch.device('cpu') ):
     """
         Read the parameters from a folder using predefined file names.
 
         Arguments
         ----------
-        camera_folder : str
+        camera_folder : str | Path
             Folder containing the parameter files.
 
         cams : int or list
             Either the number of cameras to be used or a list of camera indices.
     """
+    # If the camera_folder is a Path convert it to string first
+    if isinstance(camera_folder, Path):
+        camera_folder = str(camera_folder)
+
     i_cams = cams if type(cams) is list else list(range(cams))
 
     param_list = []
     path = camera_folder if camera_folder[-1] == sep else camera_folder + sep
-    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float(), "casadi":lambda x: np.load(path + x)}[package]
+    load_and_tensor = {"torch":lambda x: torch.from_numpy(np.load(path + x)).float().to(device), "casadi":lambda x: np.load(path + x)}[package]
     for i in i_cams:
         param_list.append({
             "A": load_and_tensor(f"calib_A{i}.npy"),
             "dist": load_and_tensor(f"calib_dist{i}.npy"),
             "P": load_and_tensor(f"calib_P{i}_.npy"),
-            "R": load_and_tensor("cs_conversion_R.npy"),
-            "T": load_and_tensor("cs_conversion_T.npy")})
+            "R_cam0_world": load_and_tensor("cs_conversion_R.npy"),
+            "T_cam0_world": load_and_tensor("cs_conversion_T.npy")})
     return param_list
 
 
@@ -61,7 +67,7 @@ class PixelDataset(Dataset):
                 Tensor containing the index of the corresponding camera.
     """
 
-    def __init__( self, p_list ):
+    def __init__( self, p_list, device=torch.device('cpu'), use_numpy=False):
         self.p = None
         self.img_idx_data = None
         for i in range(len(p_list)):
@@ -69,6 +75,9 @@ class PixelDataset(Dataset):
             self.p = p if self.p is None else np.concatenate((self.p, p), 0)
             self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
                 (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
+            if not use_numpy:
+                self.p = torch.from_numpy(self.p).to(device)
+                self.img_idx_data = torch.from_numpy(self.img_idx_data).to(device)
 
     def __len__( self ):
         return self.p.shape[0]
@@ -119,8 +128,8 @@ def ball_tree_norm(A, B, p):
     """
 
     # Convert tensors to numpy arrays
-    A_np = A.detach().numpy()
-    B_np = B.detach().numpy()
+    A_np = A.cpu().detach().numpy()
+    B_np = B.cpu().detach().numpy()
     # Create Ball Tree and query with A
     tree = BallTree(B_np, metric='minkowski', p=p)
     _, ind = tree.query(A_np, k=1)
@@ -367,7 +376,7 @@ def getMethod(method):
     return butcher
 
 
-def fromWorld2Img(pos, A, dist, P, R, T):
+def fromWorld2Img(pos, A, dist, P, R_cam0_world, T_cam0_world):
     
     r"""
         Transforms 3D world coordinates into 2D pixel coordinates on an image plane using camera calibration parameters. This function
@@ -396,10 +405,10 @@ def fromWorld2Img(pos, A, dist, P, R, T):
         P : torch.Tensor
             The projection matrix (3x4) used to project 3D camera coordinates onto the image plane.
     
-        R : torch.Tensor
+        R_cam0_world : torch.Tensor
             The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
-        T : torch.Tensor
+        T_cam0_world : torch.Tensor
             The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
@@ -428,7 +437,7 @@ def fromWorld2Img(pos, A, dist, P, R, T):
     R_t = torch.linalg.solve(A, P).float()
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = R.T@(pos-T.reshape(3,1))
+    pos_camera = R_cam0_world.T@(pos-T_cam0_world.reshape(3,1))
     pos_camera_h = torch.concat((pos_camera, torch.ones((1, pos_camera.shape[1]))), 0)
     
     # Calculate normalized camera coordinates in Camera
@@ -453,7 +462,7 @@ def fromWorld2Img(pos, A, dist, P, R, T):
     return pixel
 
 
-def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
+def fromWorld2ImgCasadi(pos, A, dist, P, R_cam0_world, T_cam0_world):
     r"""
         Transforms 3D world coordinates into 2D pixel coordinates using camera calibration parameters and the CasADi library for
         numerical computations. This function is designed for applications in optimization and control where gradient computations are
@@ -481,10 +490,10 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
         P : numpy.ndarray
             The projection matrix (3x3) used to project 3D camera coordinates onto the image plane. This is a static matrix.
     
-        R : numpy.ndarray
+        R_cam0_world : numpy.ndarray
             The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
     
-        T : numpy.ndarray
+        T_cam0_world : numpy.ndarray
             The translation vector (3x1) describing the position of the first camera in world coordinates.
     
         Returns
@@ -511,7 +520,7 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
     R_t = np.linalg.solve(A, P)
     
     # Convert from local coordinate system of the CR to the world coordinate system 
-    pos_camera = R.T@(pos-T.reshape(3,1))
+    pos_camera = R_cam0_world.T@(pos-T_cam0_world.reshape(3,1))
 
     pos_camera_h = casadi.vertcat(pos_camera, casadi.MX.ones(1, pos_camera.shape[1]))
     
@@ -536,6 +545,85 @@ def fromWorld2ImgCasadi(pos, A, dist, P, R, T):
     
     return pixel
 
+def fromWorld2ImgNumpy(pos, A, dist, P, R_cam0_world, T_cam0_world):
+    r"""
+        Transforms 3D world coordinates into 2D pixel coordinates using camera calibration parameters and the Numpy library for
+        numerical computations. This function is designed for applications in optimization and control where gradient computations are
+        necessary. It performs coordinate transformations, normalization, distortion correction, and final projection using camera
+        intrinsic parameters.
+    
+        .. note::
+            The use of CasADi's `MX` data type and operations ensures that the function is compatible with CasADi's automatic differentiation,
+            which is crucial for gradient-based optimization tasks in computer vision and robotics.
+    
+        Arguments
+        ----------
+        pos : numpy.ndarray
+            A 3xN matrix of 3D world coordinates, where N is the number of points. Should be of type numpy.ndarray for compatibility.
+    
+        A : numpy.ndarray
+            The camera intrinsic matrix (3x3) including focal lengths and principal point. This is a static matrix.
+    
+        dist : tuple of floats
+            The distortion coefficients (k1, k2, p1, p2, k3) used to model radial and tangential distortions.
+    
+        P : numpy.ndarray
+            The projection matrix (3x3) used to project 3D camera coordinates onto the image plane. This is a static matrix.
+    
+        R_cam0_world : numpy.ndarray
+            The rotation matrix (3x3) describing the orientation of the first camera in world coordinates.
+    
+        T_cam0_world : numpy.ndarray
+            The translation vector (3x1) describing the position of the first camera in world coordinates.
+    
+        Returns
+        -------
+        pixel : numpy.ndarray
+            A 2xN matrix where each column represents the pixel coordinates of the corresponding 3D point in the image. The output is
+            of type numpy.ndarray to facilitate further symbolic operations if necessary.
+    
+        Example
+        -------
+        Define world points, camera intrinsic matrix `A`, distortion coefficients, projection matrix `P`, rotation matrix `R`,
+        and translation vector `T`:
+            pos = numpy.array([[1, 2, 3], [4, 5, 6], [7, 8, 9]])
+            A = np.eye(3)
+            dist = (0.1, 0.01, 0.001, 0.001, 0.0001)
+            P = np.eye(3)
+            R = np.eye(3)
+            T = np.array([0.1, 0.2, 0.3])
+    
+        Get pixel coordinates in a CasADi-compatible format:
+            pixels = fromWorld2ImgCasadi(pos, A, dist, P, R, T)
+    """
+
+    R_t = np.linalg.solve(A, P)
+    
+    # Convert from local coordinate system of the CR to the world coordinate system 
+    pos_camera = R_cam0_world.T@(pos-T_cam0_world.reshape(3,1))
+
+    pos_camera_h = np.concatenate((pos_camera, np.ones((1, pos_camera.shape[1]))), 0)
+    
+    # Calculate normalized camera coordinates in Camera
+    camPoint = R_t @ pos_camera_h
+    normCamPoint = camPoint[:2,:] / repmat(camPoint[2,:],2,1)
+
+    # Calculate Distortion
+    k1, k2, p1, p2, k3 = dist
+    r = normCamPoint[0,:]**2 + normCamPoint[1,:]**2 
+
+    radDist = 1.0 + k1*r + k2*r**2 + k3*r**3
+    tangDistX = 2*p1*normCamPoint[0,:]*normCamPoint[1,:] + p2*(r + 2*normCamPoint[0,:]**2)
+    tangDistY = p1*(r + 2*normCamPoint[1,:]**2) + 2*p2*normCamPoint[0,:]*normCamPoint[1,:]
+
+    # Add distortion
+    x = radDist*normCamPoint[0,:] + tangDistX
+    y = radDist*normCamPoint[1,:] + tangDistY
+
+    # Calculate pixel coordinates in Camera
+    pixel = (A @ np.stack((x, y, np.ones(x.shape)), 0))[:2,:]
+    
+    return pixel
 
 def spaceCarving(images, cam_params, x_bounds, y_bounds, z_bounds, resolution=0.001):
     r"""
@@ -594,16 +682,16 @@ def spaceCarving(images, cam_params, x_bounds, y_bounds, z_bounds, resolution=0.
             carved_points, xg, yg, zg = spaceCarving(images, cam_params, x_bounds, y_bounds, z_bounds, resolution)
     """
 
-    xgrid, ygrid, zgrid = torch.meshgrid(torch.arange(x_bounds[0], x_bounds[1]+resolution, resolution), torch.arange(y_bounds[0], y_bounds[1]+resolution, resolution), torch.arange(z_bounds[0], z_bounds[1]+resolution, resolution), indexing='ij')
-    grid_points = torch.stack([xgrid.flatten(), ygrid.flatten(), zgrid.flatten()], 1)
-    voting = np.zeros((grid_points.shape[0], len(images)), bool)
+    xgrid, ygrid, zgrid = np.meshgrid(np.arange(x_bounds[0], x_bounds[1]+resolution, resolution), np.arange(y_bounds[0], y_bounds[1]+resolution, resolution), np.arange(z_bounds[0], z_bounds[1]+resolution, resolution), indexing='ij')
+    grid_points = np.stack([xgrid.flatten(), ygrid.flatten(), zgrid.flatten()], 1)
+    voting = np.zeros((grid_points.shape[0], len(images)), dtype=bool)
     for i in range(len(images)):
-        proj_pts = fromWorld2Img(grid_points.T, **cam_params[i]).round().T
+        proj_pts = fromWorld2ImgNumpy(grid_points.T, **cam_params[i]).round().T
         filter_out = (proj_pts[:,0] < 0) | (proj_pts[:,1] < 0) | (proj_pts[:,0] >= images[i].shape[1]) | (proj_pts[:,1] >= images[i].shape[0])
         grid_points = grid_points[~filter_out,:]
         proj_pts = proj_pts[~filter_out,:]
         voting = voting[~filter_out,:]
-        voting[:,i] = images[i][proj_pts[:,1].int(), proj_pts[:,0].int()]
+        voting[:,i] = images[i][proj_pts[:,1].astype(int), proj_pts[:,0].astype(int)]
     return grid_points[voting.all(1),:], xgrid, ygrid, zgrid
 
 
@@ -662,10 +750,10 @@ def spaceCarvingReconstruction(images, cam_params, p0=np.zeros((3,)), x_bounds=[
         )
         
         # Initialize the binary grid
-        binary_3d_grid = torch.zeros(grid_shape, dtype=bool)
+        binary_3d_grid = np.zeros(grid_shape, dtype=bool)
         
         # Convert pts_3d to grid indices
-        grid_indices = ((pts_3d - torch.tensor([x_bounds[0], y_bounds[0], z_bounds[0]])) / resolution).round().int()
+        grid_indices = np.round(((pts_3d - np.array([x_bounds[0], y_bounds[0], z_bounds[0]])) / resolution)).astype(int)
         
         # Update the binary grid
         for index in grid_indices:
@@ -674,19 +762,47 @@ def spaceCarvingReconstruction(images, cam_params, p0=np.zeros((3,)), x_bounds=[
         return binary_3d_grid
 
     binary_3d_grid = get_binary_grid(pts_3d, x_bounds, y_bounds, z_bounds, resolution)
-    skeletonized_grid = torch.from_numpy(skeletonize_3d(binary_3d_grid))
+    skeletonized_grid = skeletonize(binary_3d_grid)
 
-    [xs, ys, zs] = torch.where(skeletonized_grid)
+    [xs, ys, zs] = np.where(skeletonized_grid)
     dist_grid = ((xgrid-p0[0])**2+(ygrid-p0[1])**2+(zgrid-p0[2])**2)
-    dist_min = torch.min(dist_grid)
-    initial_point_grid = torch.stack(torch.where(dist_grid == dist_min), 1)
+    dist_min = np.min(dist_grid)
+    initial_point_grid = np.stack(np.where(dist_grid == dist_min), 1)
 
-    path_grid = torch.from_numpy(find_longest_path(torch.stack((xs, ys, zs), 1).detach().numpy(), initial_point_grid.detach().numpy()))
-    path = torch.stack([xgrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]], ygrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]], zgrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]]], 1)
-    path = torch.concatenate([torch.zeros((1,3)), path], 0)
+    path_grid = find_longest_path(np.stack((xs, ys, zs), 1), initial_point_grid)
+    path = np.stack([xgrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]], ygrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]], zgrid[path_grid[:,0], path_grid[:,1], path_grid[:,2]]], 1)
+    path = np.concatenate([torch.zeros((1,3)), path], 0)
     
     return path, pts_3d
     
+
+def generate_circle(n: int) -> np.ndarray:
+    """
+    Generate n points lying on the unit circle.
+
+    Arguments
+    ----------
+        n (int): The number of points to generate.
+
+    Returns
+    -------
+    numpy.array
+        An n x 2 matrix where each row is a pair (cx, cy) lying on the unit circle.
+    """
+    
+    # Generate n angles evenly spaced between 0 and 2pi
+    angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+
+    # Compute cx and cy for each angle
+    cx = np.cos(angles)
+    cy = np.sin(angles)
+
+    # Combine cx and cy into a single matrix
+    c_val = np.vstack((cx, cy)).T
+
+    return c_val
+
+
 """
     Alle Hilfsfunktionen
 """

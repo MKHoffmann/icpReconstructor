@@ -4,6 +4,8 @@ import os
 package_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(package_path)
 
+from pathlib import Path
+
 from icpReconstructor.torch_reconstruction import TorchCurveEstimator, TorchMovingFrame, TorchPolynomialCurve, Polynomial3Torch, PolynomialKTorch
 from skimage.morphology import disk, binary_dilation
 from icpReconstructor.utils import fromWorld2Img, image_to_idx, camera_folder_to_params
@@ -18,7 +20,7 @@ l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the segments
 """
 Load camera calibration files and simulate one set of cannulas.
 """
-camera_folder = "camera_calibration_files"
+camera_folder = Path.cwd() / "camera_calibration_files"
 
 cam_params = camera_folder_to_params(camera_folder, 2)
 
@@ -29,11 +31,11 @@ dist1 = cam_params[1]["dist"]
 P0 = cam_params[0]["P"]
 P1 = cam_params[1]["P"]
 
-R = cam_params[0]["R"]
-T = cam_params[0]["T"]
+R = cam_params[0]["R_cam0_world"]
+T = cam_params[0]["T_cam0_world"]
 
-plot_curvature = True
-n_iter = 1
+plot_curvature = False
+n_iter = 8
 
 #%% Image data
 """
