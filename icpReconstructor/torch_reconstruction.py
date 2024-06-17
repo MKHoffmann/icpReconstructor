@@ -59,7 +59,7 @@ class Polynomial3Torch(TorchParameterizedFunction):
         super().__init__()
         self.n = n
         if u_p is not None:
-            _u_p = u_p.clone().detach()
+            _u_p = u_p.clone().detach().reshape(-1,4)
         if continuous and optimize:
             n_f = n - end_no_curvature * 2 + 1
             n_f_dot = n - end_no_curvature
