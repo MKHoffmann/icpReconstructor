@@ -16,7 +16,7 @@ import numpy as np
 from time import time
 
 #%% Initialization
-l = torch.tensor([0.1900])  # length of the segments
+l = torch.tensor([0.0750, 0.1300, 0.1900])  # length of the segments
 
 """
 Load camera calibration files and simulate one set of cannulas.
