@@ -31,7 +31,7 @@ setup(
         'tqdm >= 4.64.1',
         'networkx >= 3.1',
         'scipy >= 1.11.0',
-        'opencv >= 4.7.0'
+        'opencv-python >= 4.7.0'
     ],
     extras_require={
         'dev': ['check-manifest'],
