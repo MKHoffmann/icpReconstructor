@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
+import numpy as np
 
 
 class TorchParameterizedFunction(nn.Module, ABC):
@@ -760,7 +761,7 @@ class TorchCurveEstimator():
         return ((1 - self.w) * torch.linalg.vector_norm(backbone_pts[pt_idc_0, :] - pts, self.dist_norm, 1).mean() + self.w * torch.linalg.vector_norm(
             pts[-1, :] - pts[-1, :], self.dist_norm, 0))
 
-    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, lr=0.2, repetitions=1, grad_tol=1e-4, scheduler=None ):
+    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, lr=0.2, repetitions=1, grad_tol=1e-4, scheduler=None, verbose=False, patience=5, tol=-1e-4 ):
         """
             Run the optimization given the the image coordinates of the CR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
             are reset after each gradient descent step.
@@ -815,7 +816,7 @@ class TorchCurveEstimator():
             best_model = deepcopy(self.curve_model.state_dict())
         
         for epoch in range(1, n_iter + 1):
-            with tqdm(enumerate(dataloader)) as pbar:
+            with tqdm(enumerate(dataloader), disable=not verbose) as pbar:
                 for iter, (smpl, idc) in pbar:
                     smpl = smpl.squeeze()
                     idc = idc.squeeze()
@@ -826,15 +827,16 @@ class TorchCurveEstimator():
                         self._bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
-                        pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                        pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
+                        if verbose:
+                            pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
+                            pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
                         
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
-                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                            break
+                        # if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
+                        #     break
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
                 f(self)
@@ -845,5 +847,8 @@ class TorchCurveEstimator():
             if loss_hist[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
                 lowest_loss = loss_hist[-1]
+            # Early stopping if the loss did not decrease in the last patience epochs.
+            if epoch > patience and (lowest_loss - loss_hist[-patience]) / abs(lowest_loss) > tol:
+                break
         self.curve_model.load_state_dict(best_model)
-        return loss_hist
+        return np.stack(loss_hist)
