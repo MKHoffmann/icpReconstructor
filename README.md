@@ -50,4 +50,4 @@ If you find our project valuable for your research or work, please consider citi
 Hoffmann, M., Mühlenhoff, J., Ding, Z., Sattel T. , Flaßkamp, K., "An iterative closest point algorithm for marker-free 3D shape registration of continuum robots" arXiv preprint arXiv:2405.15336 (2024).
 
 ## Acknowledgments
-This project was developed during my time at Saarland University in the group Systems Modeling and Simulation.
+This project was developed during my time at [Saarland University](https://www.uni-saarland.de/en/home.html) in the group [Systems Modeling and Simulation](https://www.uni-saarland.de/lehrstuhl/flasskamp/landing-page.html).
