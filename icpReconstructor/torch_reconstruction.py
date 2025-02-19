@@ -761,7 +761,17 @@ class TorchCurveEstimator():
         return ((1 - self.w) * torch.linalg.vector_norm(backbone_pts[pt_idc_0, :] - pts, self.dist_norm, 1).mean() + self.w * torch.linalg.vector_norm(
             pts[-1, :] - pts[-1, :], self.dist_norm, 0))
 
-    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, lr=0.2, repetitions=1, grad_tol=1e-4, scheduler=None, verbose=False, patience=5, tol=-1e-4 ):
+    def fit( 
+            self, 
+            pixel_list, 
+            optimizer=None, 
+            n_iter=5, 
+            batch_size=None, 
+            lr=0.2, 
+            repetitions=1, 
+            grad_tol=1e-4, 
+            scheduler=None,
+            device=torch.device("cpu")):
         """
             Run the optimization given the the image coordinates of the CR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
             are reset after each gradient descent step.
@@ -790,6 +800,11 @@ class TorchCurveEstimator():
             grad_tol : double
                 Tolerance on the necessary condition of optimality. If the abolsute value of all partial derivatives is below grad_tol, the algorithm terminates
                 early.
+
+            device : torch.Device
+                Device to generate the tensors with. This is required if
+                the default device has been altered as the numpy 
+                conversion is not considering the default device.
         """
         if len(pixel_list) != len(self.camera_calibration_parameters):
             raise Exception("The list containing the pixel positions of the CR has to match in length the number of given camera calibration parameters.")
@@ -799,20 +814,24 @@ class TorchCurveEstimator():
             
         use_scheduler = scheduler is not None
 
-        dataset = PixelDataset(pixel_list)
+        dataset = PixelDataset(pixel_list, device=device)
         
-        loss_hist = []
+        self.loss_history = []
 
         if batch_size is None:
             batch_size = int(len(dataset))
         
-        rndsampler = RandomSampler(dataset)
-        batchsampler = BatchSampler(rndsampler, batch_size=batch_size, drop_last=True)
-        dataloader = DataLoader(dataset, sampler=batchsampler)
+        rndsampler = RandomSampler(
+            dataset, generator=torch.Generator(device))
+        batchsampler = BatchSampler(
+            rndsampler, batch_size=batch_size, drop_last=True)
+        dataloader = DataLoader(
+            dataset, 
+            sampler=batchsampler)
 
         with torch.no_grad():
-            loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
-            lowest_loss = loss_hist[-1]
+            self.loss_history.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
+            lowest_loss = self.loss_history[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
         for epoch in range(1, n_iter + 1):
@@ -831,7 +850,6 @@ class TorchCurveEstimator():
                             pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
                             pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
-                        
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
@@ -843,12 +861,9 @@ class TorchCurveEstimator():
             if use_scheduler:
                 scheduler.step()
             with torch.no_grad():
-                loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
-            if loss_hist[-1] < lowest_loss:
+                self.loss_history.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
+            if self.loss_history[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
-                lowest_loss = loss_hist[-1]
-            # Early stopping if the loss did not decrease in the last patience epochs.
-            if epoch > patience and (lowest_loss - loss_hist[-patience]) / abs(lowest_loss) > tol:
-                break
+                lowest_loss = self.loss_history[-1]
         self.curve_model.load_state_dict(best_model)
-        return np.stack(loss_hist)
+        return self.loss_history
