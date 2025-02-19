@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, RandomSampler, BatchSampler
 from tqdm import tqdm
 from warnings import warn
 from copy import deepcopy
+import numpy as np
 
 
 class TorchParameterizedFunction(nn.Module, ABC):
@@ -59,7 +60,7 @@ class Polynomial3Torch(TorchParameterizedFunction):
         super().__init__()
         self.n = n
         if u_p is not None:
-            _u_p = u_p.clone().detach()
+            _u_p = u_p.clone().detach().reshape(-1,4)
         if continuous and optimize:
             n_f = n - end_no_curvature * 2 + 1
             n_f_dot = n - end_no_curvature
@@ -760,7 +761,17 @@ class TorchCurveEstimator():
         return ((1 - self.w) * torch.linalg.vector_norm(backbone_pts[pt_idc_0, :] - pts, self.dist_norm, 1).mean() + self.w * torch.linalg.vector_norm(
             pts[-1, :] - pts[-1, :], self.dist_norm, 0))
 
-    def fit( self, pixel_list, optimizer=None, n_iter=5, batch_size=None, lr=0.2, repetitions=1, grad_tol=1e-4, scheduler=None ):
+    def fit( 
+            self, 
+            pixel_list, 
+            optimizer=None, 
+            n_iter=5, 
+            batch_size=None, 
+            lr=0.2, 
+            repetitions=1, 
+            grad_tol=1e-4, 
+            scheduler=None,
+            device=torch.device("cpu")):
         """
             Run the optimization given the the image coordinates of the CR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
             are reset after each gradient descent step.
@@ -789,6 +800,11 @@ class TorchCurveEstimator():
             grad_tol : double
                 Tolerance on the necessary condition of optimality. If the abolsute value of all partial derivatives is below grad_tol, the algorithm terminates
                 early.
+
+            device : torch.Device
+                Device to generate the tensors with. This is required if
+                the default device has been altered as the numpy 
+                conversion is not considering the default device.
         """
         if len(pixel_list) != len(self.camera_calibration_parameters):
             raise Exception("The list containing the pixel positions of the CR has to match in length the number of given camera calibration parameters.")
@@ -798,24 +814,28 @@ class TorchCurveEstimator():
             
         use_scheduler = scheduler is not None
 
-        dataset = PixelDataset(pixel_list)
+        dataset = PixelDataset(pixel_list, device=device)
         
-        loss_hist = []
+        self.loss_history = []
 
         if batch_size is None:
             batch_size = int(len(dataset))
         
-        rndsampler = RandomSampler(dataset)
-        batchsampler = BatchSampler(rndsampler, batch_size=batch_size, drop_last=True)
-        dataloader = DataLoader(dataset, sampler=batchsampler)
+        rndsampler = RandomSampler(
+            dataset, generator=torch.Generator(device))
+        batchsampler = BatchSampler(
+            rndsampler, batch_size=batch_size, drop_last=True)
+        dataloader = DataLoader(
+            dataset, 
+            sampler=batchsampler)
 
         with torch.no_grad():
-            loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
-            lowest_loss = loss_hist[-1]
+            self.loss_history.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
+            lowest_loss = self.loss_history[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
         for epoch in range(1, n_iter + 1):
-            with tqdm(enumerate(dataloader)) as pbar:
+            with tqdm(enumerate(dataloader), disable=not verbose) as pbar:
                 for iter, (smpl, idc) in pbar:
                     smpl = smpl.squeeze()
                     idc = idc.squeeze()
@@ -826,24 +846,24 @@ class TorchCurveEstimator():
                         self._bb_pixel_coordinates = None
                         loss = self.loss(smpl, idc)
                         loss.backward()
-                        pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
-                        pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
+                        if verbose:
+                            pbar.set_postfix(loss=loss.item(), lr=optimizer.param_groups[0]['lr'])
+                            pbar.set_description(f"Epoch {epoch}/{n_iter}, Iteration {iter + 1}, Repetition {repetition + 1}/{repetitions}")
                         optimizer.step()
-                        
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
-                        if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                            break
+                        # if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
+                        #     break
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
                 f(self)
             if use_scheduler:
                 scheduler.step()
             with torch.no_grad():
-                loss_hist.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
-            if loss_hist[-1] < lowest_loss:
+                self.loss_history.append(self.loss(dataset.p, dataset.img_idx_data).detach().cpu().numpy())
+            if self.loss_history[-1] < lowest_loss:
                 best_model = deepcopy(self.curve_model.state_dict())
-                lowest_loss = loss_hist[-1]
+                lowest_loss = self.loss_history[-1]
         self.curve_model.load_state_dict(best_model)
-        return loss_hist
+        return self.loss_history

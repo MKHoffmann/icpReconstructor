@@ -48,7 +48,7 @@ im1_bin = plt.imread("im1.png") > 0
 p0_img = image_to_idx(im0_bin)
 p1_img = image_to_idx(im1_bin)
 
-dataset = PixelDataset([p0_img, p1_img])
+dataset = PixelDataset([p0_img, p1_img], use_numpy=True)
 
 #%% epipolar line matching
 now = time()
@@ -164,3 +164,5 @@ ax4.imshow(im1_bin)
 ax4.title.set_text('Binary Image 1')
 ax4.plot(p_img1[0, :], p_img1[1, :], label="reconstruction")
 ax4.legend()
+
+plt.show()
