@@ -45,9 +45,11 @@ For in-depth information about the algorithms and APIs used in CTCR reconstructi
 Within this repository, we provide a set of examples on one set of binary images of a simulated concentric tube continuum robot. These include the One-Step and Multi-Step algorithms presented in our work, but also different ways of warmstarting using image-processing algorithms and space-carving.
 
 
-## Extensions
+## Robot Applications
 
-Additional extensions of this method are included in the source directory. The extensions include a modification for a modular bending actuator. An example to use this extension can be found in the examples directory.
+Applications of this method to specific robots are included in the source directory.
+The applications currently include a modification for a modular bending actuator. 
+An example to use this robot application can be found in the examples directory.
 
 ## How to Cite
 
