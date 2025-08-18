@@ -769,8 +769,10 @@ class TorchCurveEstimator():
             batch_size=None, 
             lr=0.2, 
             repetitions=1, 
-            grad_tol=1e-4, 
+            tol=-1e-4,
+            patience=5,
             scheduler=None,
+            verbose=False,
             device=torch.device("cpu")):
         """
             Run the optimization given the the image coordinates of the CR. Per default, an Adam optimizer is used, the full dataset is used and the point correspondances
@@ -853,8 +855,8 @@ class TorchCurveEstimator():
                         self.curve_model.set_funs()
                         for f in self.post_step_cb:
                             f(self)
-                        # if ~torch.any(torch.tensor([torch.any(torch.abs(i.grad) >= grad_tol) for i in self.curve_model.parameters()]).bool()):
-                        #     break
+                        if epoch > patience and (lowest_loss - self.loss_history[-patience]) / abs(lowest_loss) > tol:
+                            break
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
                 f(self)
