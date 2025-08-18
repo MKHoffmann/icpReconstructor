@@ -836,6 +836,11 @@ class TorchCurveEstimator():
             lowest_loss = self.loss_history[-1]
             best_model = deepcopy(self.curve_model.state_dict())
         
+        # Call the post-epoch callback once with epoch = 0 to allow 
+        # processing of the initial values in the same as with epoch > 0.
+        for f in self.post_epoch_cb:
+            f(self, 0)
+
         for epoch in range(1, n_iter + 1):
             with tqdm(enumerate(dataloader), disable=not verbose) as pbar:
                 for iter, (smpl, idc) in pbar:
@@ -859,7 +864,7 @@ class TorchCurveEstimator():
                             break
                     self.reset_diff_states()
             for f in self.post_epoch_cb:
-                f(self)
+                f(self, epoch)
             if use_scheduler:
                 scheduler.step()
             with torch.no_grad():
