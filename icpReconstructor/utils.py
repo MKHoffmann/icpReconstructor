@@ -67,17 +67,38 @@ class PixelDataset(Dataset):
                 Tensor containing the index of the corresponding camera.
     """
 
-    def __init__( self, p_list, device=torch.device('cpu'), use_numpy=False):
+    def __init__(self, pixel_list, device=None, use_numpy=False):
+        # TODO: There could be a dedicated torch branch
+
+        # Set CPU as default device (when not using numpy)
+        if not use_numpy and device is None:
+            device = torch.device('cpu')
+
         self.p = None
         self.img_idx_data = None
-        for i in range(len(p_list)):
-            p = p_list[i]
-            self.p = p if self.p is None else np.concatenate((self.p, p), 0)
-            self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8) if self.img_idx_data is None else np.concatenate(
-                (self.img_idx_data, i * np.ones((p.shape[0],), dtype=np.int8)), 0)
+        for i, p in enumerate(pixel_list):
+            # Convert to CPU and numpy for processing
             if not use_numpy:
-                self.p = torch.from_numpy(self.p).to(device)
-                self.img_idx_data = torch.from_numpy(self.img_idx_data).to(device)
+                p = p.cpu().numpy()
+
+            # Initialize or stack pixels
+            if self.p is None:
+                self.p = p
+            else:
+                self.p = np.concatenate((self.p, p), axis=0)
+
+            # Initialize or stack image indices
+            if self.img_idx_data is None:
+                self.img_idx_data = i * np.ones((p.shape[0],), dtype=np.int8)
+            else:
+                self.img_idx_data = np.concatenate(
+                    (self.img_idx_data, 
+                     i * np.ones((p.shape[0],), dtype=np.int8)), axis=0)
+            
+        # Convert back to torch tensors and move to device specified
+        if not use_numpy:
+            self.p = torch.from_numpy(self.p).to(device)
+            self.img_idx_data = torch.from_numpy(self.img_idx_data).to(device)
 
     def __len__( self ):
         return self.p.shape[0]
